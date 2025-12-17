@@ -1,4 +1,9 @@
 // ===========================================
+// APP VERSION
+// ===========================================
+const APP_VERSION = '2024.12.0';
+
+// ===========================================
 // DATABASE HELPER - API Client
 // ===========================================
 const API_BASE = '/api';
@@ -2984,6 +2989,19 @@ function ToddlerScheduleApp() {
           </div>
         </>
       )}
+
+      {/* Version footer */}
+      <div style={{
+        position: 'fixed',
+        bottom: '8px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        fontSize: '11px',
+        color: '#444444',
+        letterSpacing: '0.5px',
+      }}>
+        v{APP_VERSION}
+      </div>
     </div>
   );
 }

@@ -22,6 +22,18 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// ===========================================
+// STATIC FILE SERVING
+// ===========================================
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve app.jsx with correct content type for Babel
+app.get('/app.jsx', (req, res) => {
+  res.setHeader('Content-Type', 'text/babel');
+  res.sendFile(path.join(__dirname, 'public', 'app.jsx'));
+});
+
 // Initialize SQLite database
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'toddler-schedule.db');
 const db = new Database(dbPath);
@@ -361,11 +373,20 @@ app.get('/api/health', (req, res) => {
 });
 
 // ===========================================
+// SPA FALLBACK
+// ===========================================
+// Serve index.html for any non-API routes (SPA support)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ===========================================
 // START SERVER
 // ===========================================
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🍼 Toddler Schedule Server running on port ${PORT}`);
   console.log(`📁 Database: ${dbPath}`);
+  console.log(`🌐 Frontend: http://localhost:${PORT}`);
 });
 
 // Graceful shutdown

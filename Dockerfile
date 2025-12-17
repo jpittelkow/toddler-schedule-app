@@ -20,6 +20,9 @@ RUN npm install --production
 COPY server.js ./
 COPY api-client.js ./
 
+# Copy frontend files
+COPY public ./public
+
 # Create data directory for SQLite
 RUN mkdir -p /app/data
 

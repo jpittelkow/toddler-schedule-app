@@ -145,6 +145,17 @@ const DB = {
     }
   },
 
+  async searchAddresses(query) {
+    try {
+      const response = await fetch(`${API_BASE}/address-search?q=${encodeURIComponent(query)}`);
+      if (!response.ok) return { results: [] };
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to search addresses:', error);
+      return { results: [] };
+    }
+  },
+
   // Activities API
   async getActivities(season) {
     try {
@@ -1584,6 +1595,9 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
   const [geocoding, setGeocoding] = React.useState(false);
   const [locationAddress, setLocationAddress] = React.useState(settings.location_address || '');
   const [locationDisplay, setLocationDisplay] = React.useState(settings.location_display || '');
+  const [addressSuggestions, setAddressSuggestions] = React.useState([]);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
+  const [searchTimeout, setSearchTimeout] = React.useState(null);
   const [newActivity, setNewActivity] = React.useState({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'], duration: null });
 
   // Load activities when Activities tab is opened
@@ -1650,11 +1664,50 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
       setLocationDisplay(result.displayName);
       updateSetting('location_address', locationAddress);
       updateSetting('location_display', result.displayName);
-      alert('Location updated! Weather will refresh shortly.');
+      // Auto-update timezone and season from location
+      if (result.timezone) {
+        updateSetting('timezone', result.timezone);
+      }
+      if (result.season) {
+        updateSetting('current_season', result.season);
+      }
+      alert(`Location updated! Timezone set to ${result.timezone || 'auto'}, season to ${result.season || 'auto'}.`);
     } catch (error) {
       alert(error.message || 'Failed to find address. Try a more specific address.');
     }
     setGeocoding(false);
+  };
+
+  // Debounced address search
+  const handleAddressChange = (value) => {
+    setLocationAddress(value);
+
+    // Clear previous timeout
+    if (searchTimeout) {
+      clearTimeout(searchTimeout);
+    }
+
+    // Don't search if too short
+    if (value.length < 3) {
+      setAddressSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    // Debounce the search
+    const timeout = setTimeout(async () => {
+      const { results } = await DB.searchAddresses(value);
+      setAddressSuggestions(results);
+      setShowSuggestions(results.length > 0);
+    }, 300);
+
+    setSearchTimeout(timeout);
+  };
+
+  const selectAddress = (suggestion) => {
+    setLocationAddress(suggestion.display_name);
+    setAddressSuggestions([]);
+    setShowSuggestions(false);
   };
 
   const updateSetting = (key, value) => {
@@ -1836,16 +1889,55 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
               </div>
               
               {/* Location for Weather */}
-              <div>
-                <label style={labelStyle}>Location (for weather)</label>
+              <div style={{ position: 'relative' }}>
+                <label style={labelStyle}>Location (for weather, timezone & season)</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    value={locationAddress}
-                    onChange={(e) => setLocationAddress(e.target.value)}
-                    style={{ ...inputStyle, flex: 1 }}
-                    placeholder="123 Main St, City, State"
-                  />
+                  <div style={{ flex: 1, position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={locationAddress}
+                      onChange={(e) => handleAddressChange(e.target.value)}
+                      onFocus={() => addressSuggestions.length > 0 && setShowSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                      style={inputStyle}
+                      placeholder="Start typing your address..."
+                    />
+                    {/* Address suggestions dropdown */}
+                    {showSuggestions && addressSuggestions.length > 0 && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        background: '#1A1A1A',
+                        border: '1px solid #333333',
+                        borderRadius: '8px',
+                        marginTop: '4px',
+                        maxHeight: '200px',
+                        overflowY: 'auto',
+                        zIndex: 100,
+                      }}>
+                        {addressSuggestions.map((suggestion, index) => (
+                          <div
+                            key={index}
+                            onClick={() => selectAddress(suggestion)}
+                            style={{
+                              padding: '10px 12px',
+                              cursor: 'pointer',
+                              borderBottom: index < addressSuggestions.length - 1 ? '1px solid #262626' : 'none',
+                              fontSize: '13px',
+                              color: '#CCCCCC',
+                              transition: 'background 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => e.target.style.background = '#262626'}
+                            onMouseLeave={(e) => e.target.style.background = 'transparent'}
+                          >
+                            {suggestion.display_name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={handleGeocode}
                     disabled={geocoding}
@@ -1861,12 +1953,12 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {geocoding ? '...' : 'Update'}
+                    {geocoding ? '...' : 'Set'}
                   </button>
                 </div>
                 {locationDisplay && (
                   <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', marginTop: '6px' }}>
-                    Current: {locationDisplay.split(',').slice(0, 3).join(',')}
+                    📍 {locationDisplay.split(',').slice(0, 3).join(',')}
                   </div>
                 )}
               </div>

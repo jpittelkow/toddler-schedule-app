@@ -642,6 +642,86 @@ const WEATHER_DESCRIPTIONS = {
   95: 'Thunderstorm', 96: 'Thunderstorm with slight hail', 99: 'Thunderstorm with heavy hail',
 };
 
+// Helper to estimate timezone from coordinates (US-focused with international fallbacks)
+const estimateTimezone = (lat, lon) => {
+  // US timezone approximations based on longitude
+  if (lat >= 24 && lat <= 50 && lon >= -125 && lon <= -66) {
+    // Continental US
+    if (lon >= -125 && lon < -115) return 'America/Los_Angeles'; // Pacific
+    if (lon >= -115 && lon < -102) return 'America/Denver';      // Mountain
+    if (lon >= -102 && lon < -87) return 'America/Chicago';      // Central
+    if (lon >= -87 && lon <= -66) return 'America/New_York';     // Eastern
+  }
+  // Alaska
+  if (lat >= 51 && lat <= 72 && lon >= -180 && lon <= -129) return 'America/Anchorage';
+  // Hawaii
+  if (lat >= 18 && lat <= 23 && lon >= -161 && lon <= -154) return 'Pacific/Honolulu';
+  // Europe approximations
+  if (lat >= 35 && lat <= 72 && lon >= -10 && lon <= 40) {
+    if (lon < 0) return 'Europe/London';
+    if (lon < 15) return 'Europe/Paris';
+    return 'Europe/Berlin';
+  }
+  // Asia/Pacific approximations
+  if (lon >= 100 && lon <= 145) return 'Asia/Tokyo';
+  if (lon >= 140 && lon <= 155 && lat >= -45 && lat <= -10) return 'Australia/Sydney';
+  // Default to UTC offset based on longitude
+  const offset = Math.round(lon / 15);
+  return `Etc/GMT${offset >= 0 ? '-' : '+'}${Math.abs(offset)}`;
+};
+
+// Helper to determine season from date and latitude
+const getSeason = (lat) => {
+  const now = new Date();
+  const month = now.getMonth(); // 0-11
+  const isNorthernHemisphere = lat >= 0;
+
+  // Northern hemisphere seasons
+  if (isNorthernHemisphere) {
+    if (month >= 2 && month <= 4) return 'spring';
+    if (month >= 5 && month <= 7) return 'summer';
+    if (month >= 8 && month <= 10) return 'fall';
+    return 'winter';
+  } else {
+    // Southern hemisphere (opposite seasons)
+    if (month >= 2 && month <= 4) return 'fall';
+    if (month >= 5 && month <= 7) return 'winter';
+    if (month >= 8 && month <= 10) return 'spring';
+    return 'summer';
+  }
+};
+
+// Address search/autocomplete endpoint
+app.get('/api/address-search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 3) {
+      return res.json({ results: [] });
+    }
+
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&addressdetails=1`,
+      { headers: { 'User-Agent': 'ToddlerScheduleApp/1.0' } }
+    );
+
+    if (!response.ok) {
+      return res.json({ results: [] });
+    }
+
+    const data = await response.json();
+    const results = data.map(item => ({
+      display_name: item.display_name,
+      lat: parseFloat(item.lat),
+      lon: parseFloat(item.lon),
+    }));
+
+    res.json({ results });
+  } catch (error) {
+    console.error('Error searching addresses:', error);
+    res.json({ results: [] });
+  }
+});
+
 app.post('/api/geocode', async (req, res) => {
   try {
     const { address } = req.body;
@@ -663,6 +743,8 @@ app.post('/api/geocode', async (req, res) => {
     const lat = parseFloat(result.lat);
     const lon = parseFloat(result.lon);
     const displayName = result.display_name;
+    const timezone = estimateTimezone(lat, lon);
+    const season = getSeason(lat);
 
     db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?', ['location_address', address, address]);
     db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?', ['location_lat', lat.toString(), lat.toString()]);
@@ -671,7 +753,7 @@ app.post('/api/geocode', async (req, res) => {
     db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?', ['weather_cache', '', '']);
 
     saveDatabase();
-    res.json({ success: true, lat, lon, displayName });
+    res.json({ success: true, lat, lon, displayName, timezone, season });
   } catch (error) {
     console.error('Error geocoding:', error);
     res.status(500).json({ error: 'Failed to geocode address' });

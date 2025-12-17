@@ -195,6 +195,45 @@ const DB = {
     }
   },
 
+  // Rating API
+  async rateActivity(activityId, rating, date) {
+    try {
+      const response = await fetch(`${API_BASE}/activities/${activityId}/rate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating, date }),
+      });
+      if (!response.ok) throw new Error('Failed to rate activity');
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to rate activity:', error);
+      throw error;
+    }
+  },
+
+  async getRatingsForDate(date) {
+    try {
+      const response = await fetch(`${API_BASE}/ratings/${date}`);
+      if (!response.ok) throw new Error('Failed to fetch ratings');
+      const data = await response.json();
+      return data.ratings;
+    } catch (error) {
+      console.error('Failed to get ratings:', error);
+      return {};
+    }
+  },
+
+  async getWeekSchedules(startDate, scheduleType) {
+    try {
+      const response = await fetch(`${API_BASE}/schedules/week/${startDate}?type=${scheduleType}`);
+      if (!response.ok) throw new Error('Failed to fetch week schedules');
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to get week schedules:', error);
+      return { schedules: {}, dates: [] };
+    }
+  },
+
   getDefaultSettings() {
     return {
       home_assistant_url: 'http://homeassistant.local:8123',
@@ -217,7 +256,7 @@ const DB = {
       baby_nap_duration: 150,
       toddler_nap_start: '13:30',
       toddler_nap_duration: 90,
-      theme: 'purple',
+      theme: 'lavender',
     };
   },
 };
@@ -236,22 +275,50 @@ const ACTIVITY_ICONS = {
 };
 
 const ACTIVITY_COLORS = {
-  wake: '#FFD93D', breakfast: '#FF8C42', freeplay: '#6BCB77', school: '#4D96FF',
-  snack: '#FF6B9D', outdoor: '#2ECC71', lunch: '#FF7B54', nap: '#9B59B6',
-  quiettime: '#A8DADC', activity: '#FF6B6B', basement: '#45B7D1', tv: '#DDA0DD',
-  dinner: '#F39C12', bath: '#74B9FF', bedtime: '#6C5CE7', drive: '#FDCB6E',
-  errand: '#00CEC9', mombreak: '#E17055', sensory: '#E056FD', music: '#686DE0',
-  building: '#F8B500', reading: '#22A6B3', cooking: '#EB4D4B', dance: '#FF6B81',
-  craft: '#7BED9F', puzzle: '#70A1FF', snow: '#74B9FF', fort: '#FFA502',
+  // Morning/Energy - Warm soft tones
+  wake: '#F5C77E',      // Soft gold
+  breakfast: '#E8A87C', // Warm peach
+  // Active/Play - Natural greens and terracotta
+  freeplay: '#7FC8A9',  // Sage green
+  outdoor: '#5DAE8B',   // Forest green
+  activity: '#E07A5F',  // Terracotta
+  // Learning/Calm - Cool blues
+  school: '#6B8FC7',    // Slate blue
+  reading: '#8AACC8',   // Sky blue
+  quiettime: '#B8C5D6', // Light periwinkle
+  // Rest - Soft purples
+  nap: '#A78BBA',       // Lavender
+  bath: '#89CFF0',      // Baby blue
+  bedtime: '#7B68A6',   // Deep lavender
+  // Meals - Earthy warm
+  lunch: '#E9967A',     // Salmon
+  dinner: '#CD7F5C',    // Sienna
+  snack: '#F4A7BB',     // Soft pink
+  cooking: '#D4826A',   // Clay
+  // Other activities
+  basement: '#79B4A9',  // Teal
+  tv: '#C9B1D4',        // Light purple
+  drive: '#D4A574',     // Camel
+  errand: '#79B4A9',    // Teal
+  mombreak: '#E8A87C',  // Warm peach
+  sensory: '#C9A7D4',   // Soft violet
+  music: '#8B9DC3',     // Dusty blue
+  building: '#D4B896',  // Sand
+  dance: '#E8A0B0',     // Dusty rose
+  craft: '#9BC4A8',     // Sage
+  puzzle: '#92A8D1',    // Periwinkle
+  snow: '#A8D4E6',      // Ice blue
+  fort: '#D4A574',      // Camel
 };
 
 const THEMES = {
-  purple: 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
-  blue: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-  green: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
-  sunset: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
-  ocean: 'linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)',
-  forest: 'linear-gradient(135deg, #134E5E 0%, #71B280 100%)',
+  // Soft pastel themes - modern 2024 style
+  lavender: 'linear-gradient(145deg, #E8E0F0 0%, #D4C5E8 50%, #C9B8E0 100%)',
+  ocean: 'linear-gradient(145deg, #E3F4F9 0%, #C8E7F0 50%, #A8D8E8 100%)',
+  peach: 'linear-gradient(145deg, #FEF0E8 0%, #FDD5C0 50%, #FCBFA0 100%)',
+  mint: 'linear-gradient(145deg, #E8F5F0 0%, #C8E8DC 50%, #A8DBC8 100%)',
+  sunset: 'linear-gradient(145deg, #FEE8E0 0%, #FDD0C8 50%, #FBB8B0 100%)',
+  night: 'linear-gradient(145deg, #2D2A3E 0%, #3D3A4E 50%, #4D4A5E 100%)',
 };
 
 // Weather code to emoji mapping (WMO codes)
@@ -596,6 +663,24 @@ const buildScheduleTemplate = (settings, isSchoolDay) => {
 // ===========================================
 
 // Generate activities for schedule slots from database activities
+// Weighted random selection based on activity ratings
+const weightedRandomSelect = (activities, excludeNames = []) => {
+  const available = activities.filter(a => !excludeNames.includes(a.name));
+  if (available.length === 0) return activities[Math.floor(Math.random() * activities.length)];
+  
+  // Calculate total weight
+  const totalWeight = available.reduce((sum, a) => sum + (a.weight || 10), 0);
+  
+  // Random weighted selection
+  let random = Math.random() * totalWeight;
+  for (const activity of available) {
+    random -= (activity.weight || 10);
+    if (random <= 0) return activity;
+  }
+  
+  return available[available.length - 1];
+};
+
 const generateActivitiesFromDB = async (season) => {
   const dbActivities = await DB.getActivities(season);
   if (!dbActivities || dbActivities.length === 0) {
@@ -609,14 +694,18 @@ const generateActivitiesFromDB = async (season) => {
   ];
 
   const activities = {};
-  const shuffled = [...dbActivities].sort(() => Math.random() - 0.5);
+  const usedNames = [];
 
-  slots.forEach((slot, index) => {
-    const activity = shuffled[index % shuffled.length];
+  slots.forEach((slot) => {
+    // Use weighted selection for variety based on ratings
+    const activity = weightedRandomSelect(dbActivities, usedNames);
+    usedNames.push(activity.name);
+    
     activities[slot] = {
       name: activity.name,
       type: activity.type,
       description: activity.description,
+      activityDbId: activity.id, // Store DB ID for rating
     };
   });
 
@@ -728,10 +817,11 @@ const CountdownDigit = ({ value, label, pulse, isWarning, isAlmostDone }) => {
 };
 
 // Current Activity Card with integrated countdown
-const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing }) => {
+const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing, onRate, rating }) => {
   const bgColor = ACTIVITY_COLORS[activity.type] || '#888';
   const icon = ACTIVITY_ICONS[activity.type] || '⭐';
   const canRefresh = activity.customizable && onRefresh;
+  const canRate = activity.customizable && activity.activityDbId && onRate;
   
   const totalSeconds = Math.max(0, Math.floor(timeRemaining * 60));
   const hours = Math.floor(totalSeconds / 3600);
@@ -760,11 +850,11 @@ const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing 
   
   return (
     <div style={{
-      background: `linear-gradient(135deg, ${bgColor}ee, ${bgColor})`,
-      borderRadius: '32px',
-      padding: '24px',
+      background: `linear-gradient(145deg, ${bgColor}dd, ${bgColor}ee, ${bgColor})`,
+      borderRadius: '28px',
+      padding: '28px',
       textAlign: 'center',
-      boxShadow: `0 8px 32px ${bgColor}60`,
+      boxShadow: `0 8px 24px ${bgColor}40, 0 2px 8px rgba(0,0,0,0.06)`,
       position: 'relative',
       overflow: 'hidden',
     }}>
@@ -903,51 +993,103 @@ const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing 
       
       {/* Progress bar */}
       <div style={{
-        height: '14px',
-        background: 'rgba(255,255,255,0.3)',
-        borderRadius: '7px',
+        height: '10px',
+        background: 'rgba(255,255,255,0.25)',
+        borderRadius: '5px',
         overflow: 'hidden',
       }}>
         <div style={{
           height: '100%',
-          background: isAlmostDone ? '#FF6B6B' : isWarning ? '#FFD93D' : 'white',
-          borderRadius: '7px',
+          background: isAlmostDone ? '#E07A5F' : isWarning ? '#F5C77E' : 'white',
+          borderRadius: '5px',
           width: `${Math.max(0, 100 - ((timeRemaining / 60) * 100))}%`,
           minWidth: '2%',
           transition: 'width 1s linear, background 0.3s ease',
         }} />
       </div>
       
+      {/* Rating buttons */}
+      {canRate && (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          gap: '12px',
+          marginTop: '20px',
+        }}>
+          <button
+            onClick={() => onRate(activity.activityDbId, 1)}
+            style={{
+              background: rating === 1 ? '#5DAE8B' : 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '14px',
+              padding: '12px 20px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '16px',
+              fontWeight: 700,
+              color: 'white',
+              transition: 'all 0.2s ease',
+              boxShadow: rating === 1 ? '0 4px 12px rgba(93,174,139,0.3)' : 'none',
+            }}
+          >
+            👍 Love it!
+          </button>
+          <button
+            onClick={() => onRate(activity.activityDbId, -1)}
+            style={{
+              background: rating === -1 ? '#E07A5F' : 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '14px',
+              padding: '12px 20px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '16px',
+              fontWeight: 700,
+              color: 'white',
+              transition: 'all 0.2s ease',
+              boxShadow: rating === -1 ? '0 4px 12px rgba(224,122,95,0.3)' : 'none',
+            }}
+          >
+            👎 Not today
+          </button>
+        </div>
+      )}
+      
       {/* Status messages */}
       {isAlmostDone && (
         <div style={{
-          marginTop: '16px',
-          fontSize: '20px',
+          marginTop: '20px',
+          fontSize: '18px',
           fontWeight: 700,
-          color: '#FFD93D',
-          animation: 'pulse 0.5s infinite',
+          color: '#F5C77E',
+          animation: 'pulse 1s infinite',
         }}>
-          ⏰ Almost time to switch!
+          Almost time to switch!
         </div>
       )}
       {isWarning && !isAlmostDone && (
         <div style={{
-          marginTop: '16px',
-          fontSize: '18px',
+          marginTop: '20px',
+          fontSize: '16px',
           fontWeight: 600,
-          color: 'rgba(255,255,255,0.95)',
+          color: 'rgba(255,255,255,0.9)',
         }}>
-          🕐 {Math.ceil(timeRemaining)} minutes left!
+          {Math.ceil(timeRemaining)} minutes left
         </div>
       )}
     </div>
   );
 };
 
-const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, onRefresh, isRefreshing }) => {
+const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, onRefresh, isRefreshing, onRate, rating }) => {
   const bgColor = ACTIVITY_COLORS[activity.type] || '#888';
   const icon = ACTIVITY_ICONS[activity.type] || '⭐';
   const canRefresh = activity.customizable && !isPast && onRefresh;
+  const canRate = activity.customizable && activity.activityDbId && onRate;
   
   const handleRefreshClick = (e) => {
     e.stopPropagation();
@@ -955,21 +1097,84 @@ const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, on
       onRefresh(activity);
     }
   };
+
+  const handleRate = (e, value) => {
+    e.stopPropagation();
+    if (onRate && activity.activityDbId) {
+      onRate(activity.activityDbId, value);
+    }
+  };
+
+  // Rating buttons component
+  const RatingButtons = ({ size = 'normal' }) => {
+    if (!canRate) return null;
+    const btnSize = size === 'small' ? '30px' : '36px';
+    const fontSize = size === 'small' ? '14px' : '18px';
+
+    return (
+      <div style={{
+        display: 'flex',
+        gap: '8px',
+        marginTop: size === 'small' ? '0' : '8px',
+      }}>
+        <button
+          onClick={(e) => handleRate(e, 1)}
+          style={{
+            background: rating === 1 ? '#5DAE8B' : 'rgba(255,255,255,0.3)',
+            border: 'none',
+            borderRadius: '10px',
+            width: btnSize,
+            height: btnSize,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: fontSize,
+            transition: 'all 0.2s ease',
+          }}
+          title="Thumbs up - show more often"
+        >
+          👍
+        </button>
+        <button
+          onClick={(e) => handleRate(e, -1)}
+          style={{
+            background: rating === -1 ? '#E07A5F' : 'rgba(255,255,255,0.3)',
+            border: 'none',
+            borderRadius: '10px',
+            width: btnSize,
+            height: btnSize,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: fontSize,
+            transition: 'all 0.2s ease',
+          }}
+          title="Thumbs down - show less often"
+        >
+          👎
+        </button>
+      </div>
+    );
+  };
   
   return (
     <div style={{
-      background: isPast ? `${bgColor}66` : bgColor,
-      borderRadius: '20px',
-      padding: isCurrent ? '20px' : '14px 16px',
+      background: isPast ? `${bgColor}20` : `${bgColor}35`,
+      borderRadius: '16px',
+      padding: isCurrent ? '20px' : '16px 18px',
       display: 'flex',
       flexDirection: isCurrent ? 'column' : 'row',
       alignItems: 'center',
-      gap: isCurrent ? '16px' : '12px',
-      boxShadow: isCurrent ? `0 8px 24px ${bgColor}60` : '0 2px 8px rgba(0,0,0,0.15)',
-      opacity: isPast ? 0.6 : 1,
+      gap: isCurrent ? '16px' : '14px',
+      boxShadow: isCurrent ? `0 6px 20px ${bgColor}30` : '0 2px 8px rgba(0,0,0,0.06)',
+      border: `1px solid ${isPast ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)'}`,
+      opacity: isPast ? 0.5 : 1,
       width: '100%',
       boxSizing: 'border-box',
       position: 'relative',
+      transition: 'all 0.2s ease',
     }}>
       {/* Refresh button for customizable activities */}
       {canRefresh && (
@@ -1003,35 +1208,43 @@ const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, on
       {isCurrent ? (
         <>
           <div style={{ fontSize: '72px', lineHeight: 1 }}>{icon}</div>
-          <div style={{ fontSize: '32px', fontWeight: 800, color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.2)', textAlign: 'center' }}>
+          <div style={{ fontSize: '32px', fontWeight: 800, color: '#2D2A3E', textAlign: 'center', letterSpacing: '-0.01em' }}>
             {activity.name}
           </div>
           {activity.description && (
-            <div style={{ fontSize: '16px', color: 'rgba(255,255,255,0.9)', fontWeight: 600, textAlign: 'center' }}>
+            <div style={{ fontSize: '16px', color: '#4A4458', fontWeight: 600, textAlign: 'center' }}>
               {activity.description}
             </div>
           )}
-          <div style={{ fontSize: '18px', color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
+          <div style={{ fontSize: '18px', color: '#6B7280', fontWeight: 600 }}>
             {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
           </div>
+          <RatingButtons />
         </>
       ) : (
         <>
-          <div style={{ fontSize: '36px', lineHeight: 1, flexShrink: 0, filter: isPast ? 'grayscale(40%)' : 'none' }}>{icon}</div>
+          <div style={{ fontSize: '36px', lineHeight: 1, flexShrink: 0, filter: isPast ? 'grayscale(30%)' : 'none' }}>{icon}</div>
           <div style={{ flex: 1, minWidth: 0, paddingRight: canRefresh ? '36px' : '0' }}>
-            <div style={{ fontSize: '18px', fontWeight: 700, color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>
+            <div style={{ fontSize: '17px', fontWeight: 700, color: '#2D2A3E', letterSpacing: '-0.01em' }}>
               {activity.name}
             </div>
-            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', fontWeight: 600 }}>
+            <div style={{ fontSize: '14px', color: '#6B7280', fontWeight: 600 }}>
               {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
             </div>
             {activity.description && (
-              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, marginTop: '2px' }}>
+              <div style={{ fontSize: '13px', color: '#8B8B9E', fontWeight: 500, marginTop: '3px' }}>
                 {activity.description}
               </div>
             )}
           </div>
-          {isPast && <div style={{ fontSize: '24px', color: 'white', flexShrink: 0 }}>✓</div>}
+          {isPast ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <RatingButtons size="small" />
+              <div style={{ fontSize: '22px', color: '#5DAE8B' }}>✓</div>
+            </div>
+          ) : (
+            <RatingButtons size="small" />
+          )}
         </>
       )}
     </div>
@@ -1040,27 +1253,24 @@ const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, on
 
 const LoadingSpinner = () => (
   <div style={{ textAlign: 'center', padding: '40px' }}>
-    <div style={{ fontSize: '64px', animation: 'spin 1s linear infinite' }}>🎨</div>
-    <div style={{ color: 'white', fontSize: '24px', fontWeight: 700, marginTop: '16px' }}>Planning today's fun...</div>
+    <div style={{ fontSize: '64px', animation: 'spin 1.5s linear infinite' }}>🎨</div>
+    <div style={{ color: '#2D2A3E', fontSize: '22px', fontWeight: 700, marginTop: '16px' }}>Planning today's fun...</div>
   </div>
 );
 
-// Weather Display Component
+// Weather Display Component - Compact & Clean
 const WeatherDisplay = ({ weather, loading }) => {
   if (loading) {
     return (
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
         gap: '8px',
-        padding: '12px 20px',
-        background: 'rgba(255,255,255,0.15)',
-        borderRadius: '20px',
-        marginTop: '12px',
+        color: '#6B7280',
+        fontSize: '14px',
       }}>
-        <div style={{ fontSize: '20px', animation: 'spin 1s linear infinite' }}>🌀</div>
-        <span style={{ color: 'white', fontSize: '14px', fontWeight: 600 }}>Loading weather...</span>
+        <span style={{ animation: 'spin 1s linear infinite' }}>🌀</span>
+        <span>Loading...</span>
       </div>
     );
   }
@@ -1070,17 +1280,12 @@ const WeatherDisplay = ({ weather, loading }) => {
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        padding: '12px 20px',
-        background: 'rgba(255,255,255,0.1)',
-        borderRadius: '20px',
-        marginTop: '12px',
+        gap: '6px',
+        color: '#8B8B9E',
+        fontSize: '13px',
       }}>
-        <span style={{ fontSize: '20px' }}>🌡️</span>
-        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '14px', fontWeight: 600 }}>
-          Set location in settings for weather
-        </span>
+        <span>🌡️</span>
+        <span>Set location in ⚙️</span>
       </div>
     );
   }
@@ -1091,37 +1296,244 @@ const WeatherDisplay = ({ weather, loading }) => {
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'center',
-      gap: '16px',
-      padding: '12px 24px',
-      background: 'rgba(255,255,255,0.15)',
-      borderRadius: '20px',
-      marginTop: '12px',
-      flexWrap: 'wrap',
+      gap: '10px',
     }}>
-      {/* Weather icon and temp */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ fontSize: '36px' }}>{icon}</span>
-        <div style={{ textAlign: 'left' }}>
-          <div style={{ fontSize: '28px', fontWeight: 800, color: 'white', lineHeight: 1 }}>
-            {weather.temperature}°F
-          </div>
-          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>
-            {weather.weatherDescription}
-          </div>
+      {/* Weather Icon */}
+      <div style={{
+        fontSize: '40px',
+        lineHeight: 1,
+      }}>
+        {icon}
+      </div>
+
+      {/* Temperature & Details */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+        <div style={{
+          fontSize: '28px',
+          fontWeight: 800,
+          color: '#2D2A3E',
+          lineHeight: 1,
+          letterSpacing: '-0.02em',
+        }}>
+          {weather.temperature}°
+        </div>
+        <div style={{
+          fontSize: '12px',
+          color: '#6B7280',
+          fontWeight: 600,
+        }}>
+          {weather.weatherDescription}
         </div>
       </div>
 
-      {/* High/Low */}
+      {/* High/Low - Compact */}
       <div style={{
         display: 'flex',
-        gap: '12px',
-        fontSize: '14px',
-        fontWeight: 600,
-        color: 'rgba(255,255,255,0.9)',
+        flexDirection: 'column',
+        gap: '2px',
+        fontSize: '12px',
+        fontWeight: 700,
       }}>
-        <span>↑ {weather.high}°</span>
-        <span>↓ {weather.low}°</span>
+        <span style={{ color: '#E07A5F' }}>↑{weather.high}°</span>
+        <span style={{ color: '#6B8FC7' }}>↓{weather.low}°</span>
+      </div>
+    </div>
+  );
+};
+
+// ===========================================
+// WEEK CALENDAR COMPONENT
+// ===========================================
+const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  
+  // Get start of week (Sunday) containing selected date
+  const getWeekStart = (dateStr) => {
+    const d = new Date(dateStr);
+    const day = d.getDay();
+    d.setDate(d.getDate() - day);
+    return d;
+  };
+  
+  const [weekStart, setWeekStart] = React.useState(() => getWeekStart(selectedDate));
+  
+  // Generate week days
+  const weekDays = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    weekDays.push({
+      date: d.toISOString().split('T')[0],
+      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()],
+      dayNum: d.getDate(),
+      isToday: d.toISOString().split('T')[0] === todayStr,
+      isSelected: d.toISOString().split('T')[0] === selectedDate,
+      hasSchedule: weekSchedules && weekSchedules[d.toISOString().split('T')[0]],
+    });
+  }
+
+  const goToPrevWeek = () => {
+    const newStart = new Date(weekStart);
+    newStart.setDate(newStart.getDate() - 7);
+    setWeekStart(newStart);
+  };
+
+  const goToNextWeek = () => {
+    const newStart = new Date(weekStart);
+    newStart.setDate(newStart.getDate() + 7);
+    setWeekStart(newStart);
+  };
+
+  const goToToday = () => {
+    setWeekStart(getWeekStart(todayStr));
+    onSelectDate(todayStr);
+  };
+
+  // Format month display
+  const monthDisplay = () => {
+    const firstDay = weekDays[0].date;
+    const lastDay = weekDays[6].date;
+    const firstMonth = new Date(firstDay).toLocaleDateString('en-US', { month: 'short' });
+    const lastMonth = new Date(lastDay).toLocaleDateString('en-US', { month: 'short' });
+    const year = new Date(firstDay).getFullYear();
+    
+    if (firstMonth === lastMonth) {
+      return `${firstMonth} ${year}`;
+    }
+    return `${firstMonth} - ${lastMonth} ${year}`;
+  };
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.85)',
+      borderRadius: '16px',
+      padding: '14px',
+      marginBottom: '14px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    }}>
+      {/* Header with navigation */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: '12px',
+      }}>
+        <button
+          onClick={goToPrevWeek}
+          style={{
+            background: '#F5F5F7',
+            border: 'none',
+            borderRadius: '10px',
+            padding: '8px 12px',
+            color: '#6B7280',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 600,
+            transition: 'all 0.2s ease',
+          }}
+        >
+          ‹
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ color: '#2D2A3E', fontWeight: 700, fontSize: '15px' }}>
+            {monthDisplay()}
+          </span>
+          {selectedDate !== todayStr && (
+            <button
+              onClick={goToToday}
+              style={{
+                background: '#7C6AA0',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '5px 10px',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+                transition: 'all 0.2s ease',
+              }}
+            >
+              Today
+            </button>
+          )}
+        </div>
+
+        <button
+          onClick={goToNextWeek}
+          style={{
+            background: '#F5F5F7',
+            border: 'none',
+            borderRadius: '10px',
+            padding: '8px 12px',
+            color: '#6B7280',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 600,
+            transition: 'all 0.2s ease',
+          }}
+        >
+          ›
+        </button>
+      </div>
+      
+      {/* Week days */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(7, 1fr)',
+        gap: '6px',
+      }}>
+        {weekDays.map((day) => (
+          <button
+            key={day.date}
+            onClick={() => onSelectDate(day.date)}
+            style={{
+              background: day.isSelected
+                ? '#7C6AA0'
+                : day.isToday
+                  ? 'rgba(124, 106, 160, 0.15)'
+                  : 'transparent',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '10px 4px',
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '3px',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span style={{
+              fontSize: '11px',
+              fontWeight: 600,
+              color: day.isSelected ? 'rgba(255,255,255,0.9)' : '#8B8B9E',
+              textTransform: 'uppercase',
+              letterSpacing: '0.02em',
+            }}>
+              {day.dayName}
+            </span>
+            <span style={{
+              fontSize: '18px',
+              fontWeight: 800,
+              color: day.isSelected ? 'white' : '#2D2A3E',
+              lineHeight: 1,
+            }}>
+              {day.dayNum}
+            </span>
+            {/* Indicator dot for days with schedules */}
+            <div style={{
+              width: '5px',
+              height: '5px',
+              borderRadius: '50%',
+              background: day.hasSchedule
+                ? (day.isSelected ? 'rgba(255,255,255,0.8)' : '#5DAE8B')
+                : 'transparent',
+              marginTop: '2px',
+            }} />
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -1245,34 +1657,37 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
   
   const inputStyle = {
     width: '100%',
-    padding: '12px',
-    fontSize: '16px',
-    border: '2px solid rgba(255,255,255,0.3)',
+    padding: '14px 16px',
+    fontSize: '15px',
+    border: '2px solid #E5E7EB',
     borderRadius: '12px',
-    background: 'rgba(255,255,255,0.1)',
-    color: 'white',
+    background: 'white',
+    color: '#2D2A3E',
     outline: 'none',
     boxSizing: 'border-box',
+    transition: 'border-color 0.2s ease',
   };
-  
+
   const labelStyle = {
     display: 'block',
     fontSize: '14px',
     fontWeight: 600,
-    marginBottom: '6px',
-    color: 'rgba(255,255,255,0.9)',
+    marginBottom: '8px',
+    color: '#2D2A3E',
   };
-  
+
   const sectionButtonStyle = (active) => ({
-    padding: '12px 16px',
-    fontSize: '14px',
+    padding: '10px 14px',
+    fontSize: '13px',
     fontWeight: 600,
     border: 'none',
-    borderRadius: '12px',
+    borderRadius: '10px',
     cursor: 'pointer',
-    background: active ? 'white' : 'rgba(255,255,255,0.2)',
-    color: active ? '#764ba2' : 'white',
+    background: active ? '#7C6AA0' : '#F5F5F7',
+    color: active ? 'white' : '#6B7280',
     flex: 1,
+    transition: 'all 0.2s ease',
+    boxShadow: active ? '0 2px 8px rgba(124,106,160,0.3)' : 'none',
   });
   
   return (
@@ -1282,51 +1697,54 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
       left: 0,
       right: 0,
       bottom: 0,
-      background: 'rgba(0,0,0,0.8)',
+      background: 'rgba(0,0,0,0.5)',
+      backdropFilter: 'blur(4px)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 1000,
-      padding: '20px',
+      padding: '16px',
       boxSizing: 'border-box',
     }}>
       <div style={{
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'white',
         borderRadius: '24px',
         width: '100%',
-        maxWidth: '500px',
-        maxHeight: '90vh',
+        maxWidth: '480px',
+        maxHeight: '85vh',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
+        boxShadow: '0 24px 48px rgba(0,0,0,0.16)',
       }}>
         {/* Header */}
-        <div style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F2' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, color: 'white', fontSize: '24px' }}>⚙️ Settings</h2>
+            <h2 style={{ margin: 0, color: '#2D2A3E', fontSize: '22px', fontWeight: 700 }}>⚙️ Settings</h2>
             <button onClick={onClose} style={{
-              background: 'rgba(255,255,255,0.2)',
+              background: '#F5F5F7',
               border: 'none',
-              borderRadius: '50%',
+              borderRadius: '10px',
               width: '40px',
               height: '40px',
-              fontSize: '20px',
+              fontSize: '18px',
               cursor: 'pointer',
-              color: 'white',
+              color: '#6B7280',
+              transition: 'all 0.2s ease',
             }}>✕</button>
           </div>
-          
+
           {/* Section tabs */}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '6px', marginTop: '16px', flexWrap: 'wrap' }}>
             <button onClick={() => setActiveSection('general')} style={sectionButtonStyle(activeSection === 'general')}>General</button>
             <button onClick={() => setActiveSection('schedule')} style={sectionButtonStyle(activeSection === 'schedule')}>Schedule</button>
             <button onClick={() => setActiveSection('activities')} style={sectionButtonStyle(activeSection === 'activities')}>Activities</button>
-            <button onClick={() => setActiveSection('homeassistant')} style={sectionButtonStyle(activeSection === 'homeassistant')}>Home Assistant</button>
+            <button onClick={() => setActiveSection('homeassistant')} style={sectionButtonStyle(activeSection === 'homeassistant')}>Smart Home</button>
           </div>
         </div>
-        
+
         {/* Content */}
-        <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+        <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, background: '#FAFAFA' }}>
           {activeSection === 'general' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Kids */}
@@ -1357,28 +1775,30 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                     />
                     {localSettings.kids.length > 1 && (
                       <button onClick={() => removeKid(index)} style={{
-                        background: 'rgba(255,0,0,0.3)',
+                        background: '#FEE2E2',
                         border: 'none',
-                        borderRadius: '8px',
+                        borderRadius: '10px',
                         width: '44px',
                         height: '44px',
-                        color: 'white',
+                        color: '#E07A5F',
                         cursor: 'pointer',
-                        fontSize: '18px',
+                        fontSize: '16px',
+                        transition: 'all 0.2s ease',
                       }}>🗑</button>
                     )}
                   </div>
                 ))}
                 <button onClick={addKid} style={{
                   width: '100%',
-                  padding: '10px',
-                  background: 'rgba(255,255,255,0.2)',
-                  border: '2px dashed rgba(255,255,255,0.4)',
+                  padding: '12px',
+                  background: 'white',
+                  border: '2px dashed #E5E7EB',
                   borderRadius: '12px',
-                  color: 'white',
+                  color: '#7C6AA0',
                   cursor: 'pointer',
                   fontSize: '14px',
                   fontWeight: 600,
+                  transition: 'all 0.2s ease',
                 }}>+ Add Child</button>
               </div>
               
@@ -1529,7 +1949,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
           {activeSection === 'activities' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Add New Activity Form */}
-              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '16px', padding: '16px' }}>
+              <div style={{ background: 'white', borderRadius: '16px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                 <label style={{ ...labelStyle, marginBottom: '12px' }}>Add New Activity</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input
@@ -1572,11 +1992,12 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                             padding: '8px 4px',
                             border: 'none',
                             borderRadius: '8px',
-                            background: newActivity.seasons.includes(season) ? 'white' : 'rgba(255,255,255,0.2)',
-                            color: newActivity.seasons.includes(season) ? '#764ba2' : 'white',
+                            background: newActivity.seasons.includes(season) ? '#7C6AA0' : '#F5F5F7',
+                            color: newActivity.seasons.includes(season) ? 'white' : '#6B7280',
                             cursor: 'pointer',
                             fontWeight: 600,
                             fontSize: '12px',
+                            transition: 'all 0.2s ease',
                           }}
                         >
                           {emoji}
@@ -1588,13 +2009,15 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                     onClick={handleAddActivity}
                     style={{
                       padding: '12px',
-                      background: 'white',
+                      background: '#7C6AA0',
                       border: 'none',
                       borderRadius: '12px',
-                      color: '#764ba2',
+                      color: 'white',
                       cursor: 'pointer',
                       fontWeight: 700,
                       fontSize: '14px',
+                      transition: 'all 0.2s ease',
+                      boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
                     }}
                   >
                     + Add Activity
@@ -1608,7 +2031,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                   Activities ({activities.filter(a => a.seasons.includes(localSettings.current_season)).length} for {localSettings.current_season})
                 </label>
                 {activitiesLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(255,255,255,0.7)' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#6B7280' }}>
                     Loading activities...
                   </div>
                 ) : (
@@ -1622,16 +2045,17 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                           display: 'flex',
                           alignItems: 'center',
                           gap: '10px',
-                          padding: '10px 12px',
-                          background: `${ACTIVITY_COLORS[activity.type] || '#888'}99`,
+                          padding: '12px',
+                          background: `${ACTIVITY_COLORS[activity.type] || '#888'}25`,
                           borderRadius: '12px',
+                          border: '1px solid rgba(0,0,0,0.05)',
                         }}
                       >
                         <span style={{ fontSize: '24px' }}>{ACTIVITY_ICONS[activity.type] || '🎨'}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ color: 'white', fontWeight: 700, fontSize: '14px' }}>{activity.name}</div>
+                          <div style={{ color: '#2D2A3E', fontWeight: 700, fontSize: '14px' }}>{activity.name}</div>
                           {activity.description && (
-                            <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '12px' }}>{activity.description}</div>
+                            <div style={{ color: '#6B7280', fontSize: '12px' }}>{activity.description}</div>
                           )}
                           <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
                             {activity.seasons.map(s => (
@@ -1642,19 +2066,20 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                           </div>
                         </div>
                         {activity.is_default ? (
-                          <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', padding: '4px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>Default</span>
+                          <span style={{ fontSize: '10px', color: '#8B8B9E', padding: '4px 8px', background: '#F5F5F7', borderRadius: '8px' }}>Default</span>
                         ) : (
                           <button
                             onClick={() => handleDeleteActivity(activity.id)}
                             style={{
-                              background: 'rgba(255,0,0,0.3)',
+                              background: '#FEE2E2',
                               border: 'none',
                               borderRadius: '8px',
                               width: '32px',
                               height: '32px',
-                              color: 'white',
+                              color: '#E07A5F',
                               cursor: 'pointer',
                               fontSize: '14px',
+                              transition: 'all 0.2s ease',
                             }}
                           >
                             🗑
@@ -1826,28 +2251,31 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
         </div>
         
         {/* Footer */}
-        <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.2)', display: 'flex', gap: '12px' }}>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid #F0F0F2', display: 'flex', gap: '12px', background: 'white' }}>
           <button onClick={onClose} style={{
             flex: 1,
             padding: '14px',
-            border: '2px solid rgba(255,255,255,0.4)',
+            border: '2px solid #E5E7EB',
             borderRadius: '12px',
-            background: 'transparent',
-            color: 'white',
+            background: 'white',
+            color: '#6B7280',
             cursor: 'pointer',
-            fontSize: '16px',
+            fontSize: '15px',
             fontWeight: 600,
+            transition: 'all 0.2s ease',
           }}>Cancel</button>
           <button onClick={handleSave} style={{
             flex: 1,
             padding: '14px',
             border: 'none',
             borderRadius: '12px',
-            background: 'white',
-            color: '#764ba2',
+            background: '#7C6AA0',
+            color: 'white',
             cursor: 'pointer',
-            fontSize: '16px',
+            fontSize: '15px',
             fontWeight: 700,
+            transition: 'all 0.2s ease',
+            boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
           }}>Save Changes</button>
         </div>
       </div>
@@ -1870,6 +2298,11 @@ function ToddlerScheduleApp() {
   const [generatedActivities, setGeneratedActivities] = React.useState({});
   const [weather, setWeather] = React.useState(null);
   const [weatherLoading, setWeatherLoading] = React.useState(true);
+  
+  // Calendar & Rating state
+  const [selectedDate, setSelectedDate] = React.useState(getTodayKey());
+  const [weekSchedules, setWeekSchedules] = React.useState({});
+  const [ratings, setRatings] = React.useState({});
 
   // Fetch weather
   const fetchWeather = React.useCallback(async () => {
@@ -1878,6 +2311,28 @@ function ToddlerScheduleApp() {
     setWeather(weatherData);
     setWeatherLoading(false);
   }, []);
+
+  // Fetch ratings for selected date
+  const fetchRatings = React.useCallback(async (date) => {
+    const dateRatings = await DB.getRatingsForDate(date);
+    setRatings(dateRatings);
+  }, []);
+
+  // Fetch week schedules
+  const fetchWeekSchedules = React.useCallback(async (startDate, type) => {
+    const weekData = await DB.getWeekSchedules(startDate, type);
+    setWeekSchedules(weekData.schedules || {});
+  }, []);
+
+  // Handle rating an activity
+  const handleRateActivity = React.useCallback(async (activityId, rating) => {
+    try {
+      await DB.rateActivity(activityId, rating, selectedDate);
+      setRatings(prev => ({ ...prev, [activityId]: rating }));
+    } catch (error) {
+      console.error('Failed to rate activity:', error);
+    }
+  }, [selectedDate]);
 
   // Initialize
   React.useEffect(() => {
@@ -1892,8 +2347,9 @@ function ToddlerScheduleApp() {
       const isSchool = loadedSettings.school_days.includes(today);
       setScheduleType(isSchool ? 'school' : 'home');
 
-      // Fetch weather
+      // Fetch weather and ratings
       fetchWeather();
+      fetchRatings(getTodayKey());
     };
     init();
   }, []);
@@ -1904,29 +2360,32 @@ function ToddlerScheduleApp() {
     return () => clearInterval(interval);
   }, [fetchWeather]);
 
-  // Build schedule when settings load
-  const buildFullSchedule = React.useCallback(async () => {
+  // Build schedule when settings load or date changes
+  const buildFullSchedule = React.useCallback(async (dateKey = null) => {
     if (!settings) return;
     
     setLoading(true);
-    const todayKey = getTodayKey();
+    const targetDate = dateKey || selectedDate;
     const isSchool = scheduleType === 'school';
     
     // Check for existing schedule
-    const existing = await DB.getSchedule(todayKey, scheduleType);
+    const existing = await DB.getSchedule(targetDate, scheduleType);
     
     let activities;
     if (existing && existing.activities) {
       activities = existing.activities;
     } else {
-      // Generate activities from database
+      // Generate activities from database with weighted selection
       activities = await generateActivitiesFromDB(settings.current_season);
-      await DB.saveSchedule(todayKey, scheduleType, activities);
+      await DB.saveSchedule(targetDate, scheduleType, activities);
 
-      sendToHomeAssistant(settings, 'schedule_generated', {
-        day_type: scheduleType,
-        activities,
-      });
+      // Only send HA notification for today
+      if (targetDate === getTodayKey()) {
+        sendToHomeAssistant(settings, 'schedule_generated', {
+          day_type: scheduleType,
+          activities,
+        });
+      }
     }
     
     setGeneratedActivities(activities);
@@ -1936,14 +2395,28 @@ function ToddlerScheduleApp() {
     const fullSchedule = template.map(item => {
       if (item.customizable && item.slot && activities[item.slot]) {
         const custom = activities[item.slot];
-        return { ...item, name: custom.name, type: custom.type, description: custom.description };
+        return { 
+          ...item, 
+          name: custom.name, 
+          type: custom.type, 
+          description: custom.description,
+          activityDbId: custom.activityDbId, // Include DB ID for rating
+        };
       }
       return item;
     });
     
     setSchedule(fullSchedule);
     setLoading(false);
-  }, [settings, scheduleType]);
+    
+    // Fetch ratings for the selected date
+    fetchRatings(targetDate);
+    
+    // Update week schedules
+    const weekStart = new Date(targetDate);
+    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    fetchWeekSchedules(weekStart.toISOString().split('T')[0], scheduleType);
+  }, [settings, scheduleType, selectedDate, fetchRatings, fetchWeekSchedules]);
 
   // Regenerate a single activity
   const handleRefreshSingleActivity = React.useCallback(async (activity) => {
@@ -1978,8 +2451,7 @@ function ToddlerScheduleApp() {
       setGeneratedActivities(updatedActivities);
 
       // Save to database
-      const todayKey = getTodayKey();
-      await DB.saveSchedule(todayKey, scheduleType, updatedActivities);
+      await DB.saveSchedule(selectedDate, scheduleType, updatedActivities);
 
       // Update the schedule
       setSchedule(prevSchedule =>
@@ -2055,12 +2527,21 @@ function ToddlerScheduleApp() {
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const dayDisplay = dayNames[now.getDay()];
 
-  const upcomingActivities = schedule.filter((_, index) => index !== currentActivityIndex);
+  // Check if viewing today
+  const isViewingToday = selectedDate === getTodayKey();
+  
+  // Only show current activity highlight when viewing today
+  const displayCurrentIndex = isViewingToday ? currentActivityIndex : -1;
+  const upcomingActivities = schedule.filter((_, index) => index !== displayCurrentIndex);
 
   const handleRegenerate = async () => {
-    const todayKey = getTodayKey();
-    await DB.deleteSchedule(todayKey, scheduleType);
-    await buildFullSchedule();
+    await DB.deleteSchedule(selectedDate, scheduleType);
+    await buildFullSchedule(selectedDate);
+  };
+
+  const handleDateChange = (newDate) => {
+    setSelectedDate(newDate);
+    buildFullSchedule(newDate);
   };
 
   const handleSaveSettings = async (newSettings) => {
@@ -2077,18 +2558,20 @@ function ToddlerScheduleApp() {
     return <LoadingSpinner />;
   }
 
-  const theme = THEMES[settings.theme] || THEMES.purple;
+  const theme = THEMES[settings.theme] || THEMES.lavender;
 
   return (
     <div style={{
       minHeight: '100vh',
       background: theme,
-      padding: '20px',
+      padding: 'clamp(12px, 4vw, 24px)',
       fontFamily: "'Nunito', sans-serif",
       boxSizing: 'border-box',
       display: 'flex',
       flexDirection: 'column',
-      gap: '20px',
+      gap: '16px',
+      maxWidth: '540px',
+      margin: '0 auto',
     }}>
       {showSettings && (
         <SettingsPanel
@@ -2102,134 +2585,197 @@ function ToddlerScheduleApp() {
         />
       )}
 
-      {/* Header */}
-      <div style={{ textAlign: 'center', color: 'white' }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+      {/* Compact Header */}
+      <div style={{
+        background: 'rgba(255,255,255,0.85)',
+        borderRadius: '20px',
+        padding: '18px',
+        boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+      }}>
+        {/* Top Row: Time, Weather, Settings */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+        }}>
+          {/* Time & Date */}
+          <div style={{ color: '#2D2A3E' }}>
+            <div style={{
+              fontSize: '32px',
+              fontWeight: 800,
+              lineHeight: 1,
+              letterSpacing: '-0.02em',
+            }}>
+              {timeDisplay}
+            </div>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#6B7280',
+              marginTop: '4px',
+            }}>
+              {dayDisplay} · {now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </div>
+          </div>
+
+          {/* Weather Display */}
+          <WeatherDisplay weather={weather} loading={weatherLoading} />
+
+          {/* Settings Button */}
           <button
             onClick={() => setShowSettings(true)}
             style={{
-              background: 'rgba(255,255,255,0.2)',
+              background: '#F5F5F7',
               border: 'none',
-              borderRadius: '50%',
+              borderRadius: '12px',
               width: '44px',
               height: '44px',
-              fontSize: '20px',
+              fontSize: '18px',
               cursor: 'pointer',
-              color: 'white',
+              flexShrink: 0,
+              transition: 'all 0.2s ease',
             }}
           >
             ⚙️
           </button>
         </div>
-        
-        <div style={{ fontSize: '56px', fontWeight: 800, textShadow: '0 4px 12px rgba(0,0,0,0.3)', lineHeight: 1.1 }}>
-          {timeDisplay}
-        </div>
-        <div style={{ fontSize: '24px', fontWeight: 600, opacity: 0.9, marginTop: '4px' }}>{dayDisplay}</div>
-        <div style={{ fontSize: '16px', fontWeight: 600, opacity: 0.8, marginTop: '2px' }}>
-          {now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-        </div>
 
-        {/* Weather Display */}
-        <WeatherDisplay weather={weather} loading={weatherLoading} />
+        {/* Bottom Row: Day Type Toggle & Refresh */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: '14px',
+          gap: '10px',
+        }}>
+          {/* Day Type Toggle - Segmented Control Style */}
+          <div style={{
+            display: 'flex',
+            background: '#F5F5F7',
+            borderRadius: '12px',
+            padding: '4px',
+          }}>
+            <button
+              onClick={() => setScheduleType('school')}
+              style={{
+                padding: '10px 18px',
+                fontSize: '14px',
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                background: scheduleType === 'school' ? 'white' : 'transparent',
+                color: scheduleType === 'school' ? '#7C6AA0' : '#6B7280',
+                boxShadow: scheduleType === 'school' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              🏫 School
+            </button>
+            <button
+              onClick={() => setScheduleType('home')}
+              style={{
+                padding: '10px 18px',
+                fontSize: '14px',
+                fontWeight: 700,
+                border: 'none',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                background: scheduleType === 'home' ? 'white' : 'transparent',
+                color: scheduleType === 'home' ? '#7C6AA0' : '#6B7280',
+                boxShadow: scheduleType === 'home' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              🏠 Home
+            </button>
+          </div>
 
-        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '12px' }}>
+          {/* Refresh Button */}
           <button
-            onClick={() => setScheduleType('school')}
+            onClick={handleRegenerate}
+            disabled={loading}
             style={{
-              padding: '10px 20px',
-              fontSize: '16px',
-              fontWeight: 700,
+              padding: '10px 16px',
+              fontSize: '14px',
+              fontWeight: 600,
               border: 'none',
-              borderRadius: '50px',
-              cursor: 'pointer',
-              background: scheduleType === 'school' ? 'white' : 'rgba(255,255,255,0.3)',
-              color: scheduleType === 'school' ? '#764ba2' : 'white',
+              borderRadius: '10px',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              background: '#7C6AA0',
+              color: 'white',
+              opacity: loading ? 0.5 : 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s ease',
+              boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
             }}
           >
-            🏫 School Day
+            🎲 <span>Shuffle</span>
           </button>
-          <button
-            onClick={() => setScheduleType('home')}
-            style={{
-              padding: '10px 20px',
-              fontSize: '16px',
-              fontWeight: 700,
-              border: 'none',
-              borderRadius: '50px',
-              cursor: 'pointer',
-              background: scheduleType === 'home' ? 'white' : 'rgba(255,255,255,0.3)',
-              color: scheduleType === 'home' ? '#764ba2' : 'white',
-            }}
-          >
-            🏠 Home Day
-          </button>
-        </div>
-
-        <button
-          onClick={handleRegenerate}
-          disabled={loading}
-          style={{
-            marginTop: '10px',
-            padding: '8px 16px',
-            fontSize: '14px',
-            fontWeight: 600,
-            border: 'none',
-            borderRadius: '50px',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            background: 'rgba(255,255,255,0.2)',
-            color: 'white',
-            opacity: loading ? 0.5 : 1,
-          }}
-        >
-          🎲 New Activities
-        </button>
-
-        <div style={{ fontSize: '12px', marginTop: '8px', opacity: 0.7 }}>
-          {settings.enable_home_assistant ? '🟢 Home Assistant Connected' : '⚪ Home Assistant Disabled'}
         </div>
       </div>
+
+      {/* Week Calendar */}
+      <WeekCalendar
+        selectedDate={selectedDate}
+        onSelectDate={handleDateChange}
+        weekSchedules={weekSchedules}
+      />
 
       {loading ? (
         <LoadingSpinner />
       ) : (
         <>
-          {/* Current Activity Card with Integrated Countdown */}
-          {currentActivityIndex !== -1 && (
+          {/* Current Activity Card with Integrated Countdown - Only show for today */}
+          {isViewingToday && displayCurrentIndex !== -1 && (
             <CurrentActivityCard
-              activity={schedule[currentActivityIndex]}
+              activity={schedule[displayCurrentIndex]}
               timeRemaining={timeRemaining}
               onRefresh={handleRefreshSingleActivity}
-              isRefreshing={refreshingActivity === schedule[currentActivityIndex].id}
+              isRefreshing={refreshingActivity === schedule[displayCurrentIndex].id}
+              onRate={handleRateActivity}
+              rating={schedule[displayCurrentIndex].activityDbId ? ratings[schedule[displayCurrentIndex].activityDbId] : null}
             />
           )}
 
           <div style={{
-            background: 'rgba(255,255,255,0.15)',
-            borderRadius: '24px',
+            background: 'rgba(255,255,255,0.8)',
+            borderRadius: '20px',
             padding: '20px',
-            backdropFilter: 'blur(10px)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
           }}>
-            <div style={{ textAlign: 'center', color: 'white', fontSize: '20px', fontWeight: 700, marginBottom: '12px', flexShrink: 0 }}>
-              📅 Today's Schedule
+            <div style={{ textAlign: 'center', color: '#2D2A3E', fontSize: '18px', fontWeight: 700, marginBottom: '16px', flexShrink: 0, letterSpacing: '-0.01em' }}>
+              {isViewingToday ? "Today's Schedule" : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
-              {upcomingActivities.map((activity) => (
-                <ActivityCard
-                  key={activity.id}
-                  activity={activity}
-                  isCurrent={false}
-                  isPast={currentTime >= parseTime(activity.end)}
-                  timeRemaining={0}
-                  progress={0}
-                  onRefresh={handleRefreshSingleActivity}
-                  isRefreshing={refreshingActivity === activity.id}
-                />
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
+              {upcomingActivities.map((activity) => {
+                // For past dates, all activities are past. For future dates, none are.
+                const isPastActivity = isViewingToday 
+                  ? currentTime >= parseTime(activity.end)
+                  : selectedDate < getTodayKey();
+                
+                return (
+                  <ActivityCard
+                    key={activity.id}
+                    activity={activity}
+                    isCurrent={false}
+                    isPast={isPastActivity}
+                    timeRemaining={0}
+                    progress={0}
+                    onRefresh={handleRefreshSingleActivity}
+                    isRefreshing={refreshingActivity === activity.id}
+                    onRate={handleRateActivity}
+                    rating={activity.activityDbId ? ratings[activity.activityDbId] : null}
+                  />
+                );
+              })}
             </div>
           </div>
         </>

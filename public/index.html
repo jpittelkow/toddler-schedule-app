@@ -12,16 +12,42 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
+    :root {
+      --text-primary: #2D2A3E;
+      --text-secondary: #6B7280;
+      --text-light: rgba(255, 255, 255, 0.95);
+      --surface: rgba(255, 255, 255, 0.9);
+      --surface-solid: #FFFFFF;
+      --accent: #7C6AA0;
+      --accent-light: rgba(124, 106, 160, 0.15);
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+      --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 20px;
+      --radius-2xl: 24px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { margin: 0; padding: 0; font-family: 'Nunito', sans-serif; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Nunito', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-    @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-    @keyframes float { 0%, 100% { transform: translateY(0) scale(1); opacity: 0.1; } 50% { transform: translateY(-100px) scale(1.2); opacity: 0.2; } }
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.4); border-radius: 4px; }
-    select option { background: #764ba2; color: white; }
+    @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    @keyframes float { 0%, 100% { transform: translateY(0) scale(1); opacity: 0.08; } 50% { transform: translateY(-80px) scale(1.1); opacity: 0.15; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes gentlePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(0,0,0,0.04); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
+    select option { background: #7C6AA0; color: white; }
   </style>
 </head>
 <body>

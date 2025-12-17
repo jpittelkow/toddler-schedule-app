@@ -30,9 +30,9 @@ ENV DB_PATH=/app/data/toddler-schedule.db
 # Expose port
 EXPOSE 3001
 
-# Health check
+# Health check (using Node.js since wget isn't in alpine, using 127.0.0.1 to avoid IPv6 issues)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/api/health || exit 1
+  CMD node -e "require('http').get('http://127.0.0.1:3001/api/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 # Start the server
 CMD ["node", "server.js"]

@@ -256,6 +256,8 @@ const DB = {
       baby_nap_duration: 150,
       toddler_nap_start: '13:30',
       toddler_nap_duration: 90,
+      activity_duration: 30,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago',
       theme: 'lavender',
     };
   },
@@ -312,13 +314,8 @@ const ACTIVITY_COLORS = {
 };
 
 const THEMES = {
-  // Soft pastel themes - modern 2024 style
-  lavender: 'linear-gradient(145deg, #E8E0F0 0%, #D4C5E8 50%, #C9B8E0 100%)',
-  ocean: 'linear-gradient(145deg, #E3F4F9 0%, #C8E7F0 50%, #A8D8E8 100%)',
-  peach: 'linear-gradient(145deg, #FEF0E8 0%, #FDD5C0 50%, #FCBFA0 100%)',
-  mint: 'linear-gradient(145deg, #E8F5F0 0%, #C8E8DC 50%, #A8DBC8 100%)',
-  sunset: 'linear-gradient(145deg, #FEE8E0 0%, #FDD0C8 50%, #FBB8B0 100%)',
-  night: 'linear-gradient(145deg, #2D2A3E 0%, #3D3A4E 50%, #4D4A5E 100%)',
+  // Solid black background
+  default: '#000000',
 };
 
 // Weather code to emoji mapping (WMO codes)
@@ -376,12 +373,47 @@ const formatTime12h = (timeStr) => {
   return `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
 };
 
-const getCurrentMinutes = () => {
+// Timezone-aware utility functions
+const getTimeInTimezone = (timezone) => {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const hours = parseInt(parts.find(p => p.type === 'hour').value);
+  const minutes = parseInt(parts.find(p => p.type === 'minute').value);
+  const seconds = parseInt(parts.find(p => p.type === 'second').value);
+  return { hours, minutes, seconds };
+};
+
+const getDateInTimezone = (timezone) => {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  return formatter.format(now); // Returns YYYY-MM-DD format
+};
+
+const getCurrentMinutes = (timezone) => {
+  if (timezone) {
+    const { hours, minutes, seconds } = getTimeInTimezone(timezone);
+    return hours * 60 + minutes + seconds / 60;
+  }
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
 };
 
-const getTodayKey = () => {
+const getTodayKey = (timezone) => {
+  if (timezone) {
+    return getDateInTimezone(timezone);
+  }
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
@@ -784,18 +816,17 @@ const CountdownDigit = ({ value, label, pulse, isWarning, isAlmostDone }) => {
       alignItems: 'center',
     }}>
       <div style={{
-        background: isAlmostDone ? 'rgba(255,100,100,0.3)' : isWarning ? 'rgba(255,217,61,0.3)' : 'rgba(255,255,255,0.2)',
-        borderRadius: '16px',
+        background: isAlmostDone ? 'rgba(224,122,95,0.2)' : isWarning ? 'rgba(245,199,126,0.2)' : '#262626',
+        borderRadius: '12px',
         padding: '12px 16px',
         minWidth: '70px',
-        transform: pulse ? 'scale(1.05)' : 'scale(1)',
+        transform: pulse ? 'scale(1.02)' : 'scale(1)',
         transition: 'transform 0.2s ease, background 0.3s ease',
       }}>
         <div style={{
           fontSize: '48px',
           fontWeight: 800,
-          color: 'white',
-          textShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          color: isAlmostDone ? '#E07A5F' : isWarning ? '#F5C77E' : '#FFFFFF',
           lineHeight: 1,
           fontFamily: "'Nunito', sans-serif",
         }}>
@@ -803,10 +834,10 @@ const CountdownDigit = ({ value, label, pulse, isWarning, isAlmostDone }) => {
         </div>
       </div>
       <div style={{
-        fontSize: '12px',
+        fontSize: '11px',
         fontWeight: 600,
-        color: 'rgba(255,255,255,0.8)',
-        marginTop: '4px',
+        color: '#666666',
+        marginTop: '6px',
         textTransform: 'uppercase',
         letterSpacing: '1px',
       }}>
@@ -850,220 +881,198 @@ const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing,
   
   return (
     <div style={{
-      background: `linear-gradient(145deg, ${bgColor}dd, ${bgColor}ee, ${bgColor})`,
+      background: '#161616',
       borderRadius: '28px',
       padding: '28px',
       textAlign: 'center',
-      boxShadow: `0 8px 24px ${bgColor}40, 0 2px 8px rgba(0,0,0,0.06)`,
+      border: '1px solid #262626',
       position: 'relative',
       overflow: 'hidden',
     }}>
-      {/* Animated background bubbles */}
+      {/* Activity color accent bar at top */}
       <div style={{
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
-        bottom: 0,
-        overflow: 'hidden',
-        pointerEvents: 'none',
-      }}>
-        {[...Array(8)].map((_, i) => (
-          <div
-            key={i}
-            style={{
-              position: 'absolute',
-              width: `${20 + i * 12}px`,
-              height: `${20 + i * 12}px`,
-              borderRadius: '50%',
-              background: 'rgba(255,255,255,0.08)',
-              left: `${5 + i * 12}%`,
-              bottom: '-20px',
-              animation: `float ${3 + i * 0.4}s ease-in-out infinite`,
-              animationDelay: `${i * 0.2}s`,
-            }}
-          />
-        ))}
-      </div>
-      
-      {/* Refresh button */}
-      {canRefresh && (
-        <button
-          onClick={handleRefreshClick}
-          disabled={isRefreshing}
-          style={{
-            position: 'absolute',
-            top: '16px',
-            right: '16px',
-            background: 'rgba(255,255,255,0.25)',
-            border: 'none',
-            borderRadius: '50%',
-            width: '44px',
-            height: '44px',
-            cursor: isRefreshing ? 'wait' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '22px',
-            transition: 'all 0.2s ease',
-            opacity: isRefreshing ? 0.5 : 1,
-            animation: isRefreshing ? 'spin 1s linear infinite' : 'none',
-            zIndex: 10,
-          }}
-          title="Get different activity"
-        >
-          🔄
-        </button>
-      )}
-      
+        height: '4px',
+        background: bgColor,
+      }} />
+
       {/* Header label */}
       <div style={{
-        fontSize: '16px',
+        fontSize: '12px',
         fontWeight: 700,
-        color: 'rgba(255,255,255,0.9)',
-        marginBottom: '12px',
+        color: bgColor,
+        marginBottom: '16px',
+        marginTop: '8px',
         textTransform: 'uppercase',
-        letterSpacing: '2px',
+        letterSpacing: '3px',
       }}>
-        ⭐ Right Now ⭐
+        Now
       </div>
-      
+
       {/* Activity icon - big and bouncy */}
       <div style={{
-        fontSize: '80px',
+        fontSize: '72px',
         lineHeight: 1,
-        marginBottom: '12px',
+        marginBottom: '16px',
         animation: pulse ? 'bounce 0.3s ease' : 'none',
-        filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))',
       }}>
         {icon}
       </div>
-      
+
       {/* Activity name */}
       <div style={{
-        fontSize: '32px',
+        fontSize: '28px',
         fontWeight: 800,
-        color: 'white',
-        textShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        color: '#FFFFFF',
         marginBottom: '8px',
+        letterSpacing: '-0.02em',
       }}>
         {activity.name}
       </div>
-      
+
       {/* Description */}
       {activity.description && (
         <div style={{
-          fontSize: '18px',
-          color: 'rgba(255,255,255,0.9)',
+          fontSize: '16px',
+          color: '#888888',
           fontWeight: 600,
           marginBottom: '8px',
         }}>
           {activity.description}
         </div>
       )}
-      
+
       {/* Time range */}
       <div style={{
-        fontSize: '16px',
-        color: 'rgba(255,255,255,0.8)',
+        fontSize: '14px',
+        color: '#666666',
         fontWeight: 600,
-        marginBottom: '20px',
+        marginBottom: '24px',
       }}>
         {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
       </div>
-      
+
       {/* Big countdown numbers */}
       <div style={{
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
         gap: '8px',
-        marginBottom: '16px',
+        marginBottom: '20px',
       }}>
         {hours > 0 && (
           <>
             <CountdownDigit value={hours} label="hr" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
-            <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8, alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
+            <div style={{ fontSize: '48px', fontWeight: 800, color: '#444444', alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
           </>
         )}
         <CountdownDigit value={minutes} label="min" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
-        <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8, alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
+        <div style={{ fontSize: '48px', fontWeight: 800, color: '#444444', alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
         <CountdownDigit value={seconds} label="sec" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
       </div>
-      
+
       {/* Progress bar */}
       <div style={{
-        height: '10px',
-        background: 'rgba(255,255,255,0.25)',
-        borderRadius: '5px',
+        height: '6px',
+        background: '#262626',
+        borderRadius: '3px',
         overflow: 'hidden',
       }}>
         <div style={{
           height: '100%',
-          background: isAlmostDone ? '#E07A5F' : isWarning ? '#F5C77E' : 'white',
-          borderRadius: '5px',
+          background: isAlmostDone ? '#E07A5F' : isWarning ? '#F5C77E' : bgColor,
+          borderRadius: '3px',
           width: `${Math.max(0, 100 - ((timeRemaining / 60) * 100))}%`,
           minWidth: '2%',
           transition: 'width 1s linear, background 0.3s ease',
         }} />
       </div>
-      
-      {/* Rating buttons */}
-      {canRate && (
+
+      {/* Action buttons row */}
+      {(canRate || canRefresh) && (
         <div style={{
           display: 'flex',
           justifyContent: 'center',
           gap: '12px',
           marginTop: '20px',
         }}>
-          <button
-            onClick={() => onRate(activity.activityDbId, 1)}
-            style={{
-              background: rating === 1 ? '#5DAE8B' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '14px',
-              padding: '12px 20px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '16px',
-              fontWeight: 700,
-              color: 'white',
-              transition: 'all 0.2s ease',
-              boxShadow: rating === 1 ? '0 4px 12px rgba(93,174,139,0.3)' : 'none',
-            }}
-          >
-            👍 Love it!
-          </button>
-          <button
-            onClick={() => onRate(activity.activityDbId, -1)}
-            style={{
-              background: rating === -1 ? '#E07A5F' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '14px',
-              padding: '12px 20px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              fontSize: '16px',
-              fontWeight: 700,
-              color: 'white',
-              transition: 'all 0.2s ease',
-              boxShadow: rating === -1 ? '0 4px 12px rgba(224,122,95,0.3)' : 'none',
-            }}
-          >
-            👎 Not today
-          </button>
+          {canRate && (
+            <>
+              <button
+                onClick={() => onRate(activity.activityDbId, 1)}
+                style={{
+                  background: rating === 1 ? '#5DAE8B' : '#262626',
+                  border: rating === 1 ? 'none' : '1px solid #333333',
+                  borderRadius: '12px',
+                  padding: '12px 20px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: '#FFFFFF',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                👍 Love it!
+              </button>
+              <button
+                onClick={() => onRate(activity.activityDbId, -1)}
+                style={{
+                  background: rating === -1 ? '#E07A5F' : '#262626',
+                  border: rating === -1 ? 'none' : '1px solid #333333',
+                  borderRadius: '12px',
+                  padding: '12px 20px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  color: '#FFFFFF',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                👎 Not today
+              </button>
+            </>
+          )}
+          {canRefresh && (
+            <button
+              onClick={handleRefreshClick}
+              disabled={isRefreshing}
+              style={{
+                background: '#262626',
+                border: '1px solid #333333',
+                borderRadius: '12px',
+                padding: '12px 20px',
+                cursor: isRefreshing ? 'wait' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '14px',
+                fontWeight: 700,
+                color: '#FFFFFF',
+                transition: 'all 0.2s ease',
+                opacity: isRefreshing ? 0.5 : 1,
+              }}
+              title="Get different activity"
+            >
+              <span style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }}>🔄</span> Shuffle
+            </button>
+          )}
         </div>
       )}
-      
+
       {/* Status messages */}
       {isAlmostDone && (
         <div style={{
           marginTop: '20px',
-          fontSize: '18px',
+          fontSize: '16px',
           fontWeight: 700,
           color: '#F5C77E',
           animation: 'pulse 1s infinite',
@@ -1074,9 +1083,9 @@ const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing,
       {isWarning && !isAlmostDone && (
         <div style={{
           marginTop: '20px',
-          fontSize: '16px',
+          fontSize: '14px',
           fontWeight: 600,
-          color: 'rgba(255,255,255,0.9)',
+          color: '#888888',
         }}>
           {Math.ceil(timeRemaining)} minutes left
         </div>
@@ -1105,145 +1114,156 @@ const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, on
     }
   };
 
-  // Rating buttons component
-  const RatingButtons = ({ size = 'normal' }) => {
-    if (!canRate) return null;
+  // Action buttons component (rating + refresh)
+  const ActionButtons = ({ size = 'normal' }) => {
     const btnSize = size === 'small' ? '30px' : '36px';
     const fontSize = size === 'small' ? '14px' : '18px';
+    const showRefresh = canRefresh && !isPast;
+
+    if (!canRate && !showRefresh) return null;
 
     return (
       <div style={{
         display: 'flex',
-        gap: '8px',
+        gap: '6px',
         marginTop: size === 'small' ? '0' : '8px',
       }}>
-        <button
-          onClick={(e) => handleRate(e, 1)}
-          style={{
-            background: rating === 1 ? '#5DAE8B' : 'rgba(255,255,255,0.3)',
-            border: 'none',
-            borderRadius: '10px',
-            width: btnSize,
-            height: btnSize,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: fontSize,
-            transition: 'all 0.2s ease',
-          }}
-          title="Thumbs up - show more often"
-        >
-          👍
-        </button>
-        <button
-          onClick={(e) => handleRate(e, -1)}
-          style={{
-            background: rating === -1 ? '#E07A5F' : 'rgba(255,255,255,0.3)',
-            border: 'none',
-            borderRadius: '10px',
-            width: btnSize,
-            height: btnSize,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: fontSize,
-            transition: 'all 0.2s ease',
-          }}
-          title="Thumbs down - show less often"
-        >
-          👎
-        </button>
+        {canRate && (
+          <>
+            <button
+              onClick={(e) => handleRate(e, 1)}
+              style={{
+                background: rating === 1 ? '#5DAE8B' : '#333333',
+                border: 'none',
+                borderRadius: '8px',
+                width: btnSize,
+                height: btnSize,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: fontSize,
+                transition: 'all 0.2s ease',
+              }}
+              title="Thumbs up - show more often"
+            >
+              👍
+            </button>
+            <button
+              onClick={(e) => handleRate(e, -1)}
+              style={{
+                background: rating === -1 ? '#E07A5F' : '#333333',
+                border: 'none',
+                borderRadius: '8px',
+                width: btnSize,
+                height: btnSize,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: fontSize,
+                transition: 'all 0.2s ease',
+              }}
+              title="Thumbs down - show less often"
+            >
+              👎
+            </button>
+          </>
+        )}
+        {showRefresh && (
+          <button
+            onClick={handleRefreshClick}
+            disabled={isRefreshing}
+            style={{
+              background: '#333333',
+              border: 'none',
+              borderRadius: '8px',
+              width: btnSize,
+              height: btnSize,
+              cursor: isRefreshing ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: fontSize,
+              transition: 'all 0.2s ease',
+              opacity: isRefreshing ? 0.5 : 1,
+            }}
+            title="Get different activity"
+          >
+            <span style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }}>🔄</span>
+          </button>
+        )}
       </div>
     );
   };
-  
+
   return (
     <div style={{
-      background: isPast ? `${bgColor}20` : `${bgColor}35`,
+      background: '#161616',
       borderRadius: '16px',
-      padding: isCurrent ? '20px' : '16px 18px',
+      padding: isCurrent ? '20px' : '14px 16px',
       display: 'flex',
       flexDirection: isCurrent ? 'column' : 'row',
       alignItems: 'center',
       gap: isCurrent ? '16px' : '14px',
-      boxShadow: isCurrent ? `0 6px 20px ${bgColor}30` : '0 2px 8px rgba(0,0,0,0.06)',
-      border: `1px solid ${isPast ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)'}`,
-      opacity: isPast ? 0.5 : 1,
+      border: '1px solid #262626',
+      opacity: isPast ? 0.4 : 1,
       width: '100%',
       boxSizing: 'border-box',
       position: 'relative',
       transition: 'all 0.2s ease',
     }}>
-      {/* Refresh button for customizable activities */}
-      {canRefresh && (
-        <button
-          onClick={handleRefreshClick}
-          disabled={isRefreshing}
-          style={{
-            position: 'absolute',
-            top: isCurrent ? '12px' : '8px',
-            right: isCurrent ? '12px' : '8px',
-            background: 'rgba(255,255,255,0.25)',
-            border: 'none',
-            borderRadius: '50%',
-            width: isCurrent ? '40px' : '32px',
-            height: isCurrent ? '40px' : '32px',
-            cursor: isRefreshing ? 'wait' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: isCurrent ? '20px' : '16px',
-            transition: 'all 0.2s ease',
-            opacity: isRefreshing ? 0.5 : 1,
-            animation: isRefreshing ? 'spin 1s linear infinite' : 'none',
-          }}
-          title="Get different activity"
-        >
-          🔄
-        </button>
-      )}
-      
+      {/* Color accent */}
+      <div style={{
+        position: 'absolute',
+        left: 0,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        width: '3px',
+        height: '60%',
+        background: bgColor,
+        borderRadius: '0 2px 2px 0',
+      }} />
+
       {isCurrent ? (
         <>
           <div style={{ fontSize: '72px', lineHeight: 1 }}>{icon}</div>
-          <div style={{ fontSize: '32px', fontWeight: 800, color: '#2D2A3E', textAlign: 'center', letterSpacing: '-0.01em' }}>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: '#FFFFFF', textAlign: 'center', letterSpacing: '-0.01em' }}>
             {activity.name}
           </div>
           {activity.description && (
-            <div style={{ fontSize: '16px', color: '#4A4458', fontWeight: 600, textAlign: 'center' }}>
+            <div style={{ fontSize: '16px', color: '#888888', fontWeight: 600, textAlign: 'center' }}>
               {activity.description}
             </div>
           )}
-          <div style={{ fontSize: '18px', color: '#6B7280', fontWeight: 600 }}>
+          <div style={{ fontSize: '16px', color: '#666666', fontWeight: 600 }}>
             {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
           </div>
-          <RatingButtons />
+          <ActionButtons />
         </>
       ) : (
         <>
-          <div style={{ fontSize: '36px', lineHeight: 1, flexShrink: 0, filter: isPast ? 'grayscale(30%)' : 'none' }}>{icon}</div>
-          <div style={{ flex: 1, minWidth: 0, paddingRight: canRefresh ? '36px' : '0' }}>
-            <div style={{ fontSize: '17px', fontWeight: 700, color: '#2D2A3E', letterSpacing: '-0.01em' }}>
+          <div style={{ fontSize: '32px', lineHeight: 1, flexShrink: 0, marginLeft: '8px', filter: isPast ? 'grayscale(30%)' : 'none' }}>{icon}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: '#FFFFFF', letterSpacing: '-0.01em' }}>
               {activity.name}
             </div>
-            <div style={{ fontSize: '14px', color: '#6B7280', fontWeight: 600 }}>
+            <div style={{ fontSize: '13px', color: '#666666', fontWeight: 600 }}>
               {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
             </div>
             {activity.description && (
-              <div style={{ fontSize: '13px', color: '#8B8B9E', fontWeight: 500, marginTop: '3px' }}>
+              <div style={{ fontSize: '12px', color: '#555555', fontWeight: 500, marginTop: '2px' }}>
                 {activity.description}
               </div>
             )}
           </div>
           {isPast ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              <RatingButtons size="small" />
-              <div style={{ fontSize: '22px', color: '#5DAE8B' }}>✓</div>
+              <ActionButtons size="small" />
+              <div style={{ fontSize: '20px', color: '#5DAE8B' }}>✓</div>
             </div>
           ) : (
-            <RatingButtons size="small" />
+            <ActionButtons size="small" />
           )}
         </>
       )}
@@ -1254,7 +1274,7 @@ const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, on
 const LoadingSpinner = () => (
   <div style={{ textAlign: 'center', padding: '40px' }}>
     <div style={{ fontSize: '64px', animation: 'spin 1.5s linear infinite' }}>🎨</div>
-    <div style={{ color: '#2D2A3E', fontSize: '22px', fontWeight: 700, marginTop: '16px' }}>Planning today's fun...</div>
+    <div style={{ color: '#FFFFFF', fontSize: '22px', fontWeight: 700, marginTop: '16px' }}>Planning today's fun...</div>
   </div>
 );
 
@@ -1266,7 +1286,7 @@ const WeatherDisplay = ({ weather, loading }) => {
         display: 'flex',
         alignItems: 'center',
         gap: '8px',
-        color: '#6B7280',
+        color: '#666666',
         fontSize: '14px',
       }}>
         <span style={{ animation: 'spin 1s linear infinite' }}>🌀</span>
@@ -1281,7 +1301,7 @@ const WeatherDisplay = ({ weather, loading }) => {
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
-        color: '#8B8B9E',
+        color: '#666666',
         fontSize: '13px',
       }}>
         <span>🌡️</span>
@@ -1300,7 +1320,7 @@ const WeatherDisplay = ({ weather, loading }) => {
     }}>
       {/* Weather Icon */}
       <div style={{
-        fontSize: '40px',
+        fontSize: '36px',
         lineHeight: 1,
       }}>
         {icon}
@@ -1309,17 +1329,17 @@ const WeatherDisplay = ({ weather, loading }) => {
       {/* Temperature & Details */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
         <div style={{
-          fontSize: '28px',
+          fontSize: '24px',
           fontWeight: 800,
-          color: '#2D2A3E',
+          color: '#FFFFFF',
           lineHeight: 1,
           letterSpacing: '-0.02em',
         }}>
           {weather.temperature}°
         </div>
         <div style={{
-          fontSize: '12px',
-          color: '#6B7280',
+          fontSize: '11px',
+          color: '#666666',
           fontWeight: 600,
         }}>
           {weather.weatherDescription}
@@ -1331,7 +1351,7 @@ const WeatherDisplay = ({ weather, loading }) => {
         display: 'flex',
         flexDirection: 'column',
         gap: '2px',
-        fontSize: '12px',
+        fontSize: '11px',
         fontWeight: 700,
       }}>
         <span style={{ color: '#E07A5F' }}>↑{weather.high}°</span>
@@ -1344,32 +1364,48 @@ const WeatherDisplay = ({ weather, loading }) => {
 // ===========================================
 // WEEK CALENDAR COMPONENT
 // ===========================================
-const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
+const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules, schoolDays = [] }) => {
+  // Use local date formatting to avoid timezone issues
+  const formatLocalDate = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const parseLocalDate = (dateStr) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  
+  const todayStr = formatLocalDate(today);
+
   // Get start of week (Sunday) containing selected date
   const getWeekStart = (dateStr) => {
-    const d = new Date(dateStr);
+    const d = parseLocalDate(dateStr);
     const day = d.getDay();
     d.setDate(d.getDate() - day);
     return d;
   };
-  
+
   const [weekStart, setWeekStart] = React.useState(() => getWeekStart(selectedDate));
-  
+
   // Generate week days
   const weekDays = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + i);
+    const dateStr = formatLocalDate(d);
+    const dayOfWeek = d.getDay();
     weekDays.push({
-      date: d.toISOString().split('T')[0],
-      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()],
+      date: dateStr,
+      dayName: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
       dayNum: d.getDate(),
-      isToday: d.toISOString().split('T')[0] === todayStr,
-      isSelected: d.toISOString().split('T')[0] === selectedDate,
-      hasSchedule: weekSchedules && weekSchedules[d.toISOString().split('T')[0]],
+      isToday: dateStr === todayStr,
+      isSelected: dateStr === selectedDate,
+      hasSchedule: weekSchedules && weekSchedules[dateStr],
+      isSchoolDay: schoolDays.includes(dayOfWeek),
     });
   }
 
@@ -1392,12 +1428,12 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
 
   // Format month display
   const monthDisplay = () => {
-    const firstDay = weekDays[0].date;
-    const lastDay = weekDays[6].date;
-    const firstMonth = new Date(firstDay).toLocaleDateString('en-US', { month: 'short' });
-    const lastMonth = new Date(lastDay).toLocaleDateString('en-US', { month: 'short' });
-    const year = new Date(firstDay).getFullYear();
-    
+    const firstDay = parseLocalDate(weekDays[0].date);
+    const lastDay = parseLocalDate(weekDays[6].date);
+    const firstMonth = firstDay.toLocaleDateString('en-US', { month: 'short' });
+    const lastMonth = lastDay.toLocaleDateString('en-US', { month: 'short' });
+    const year = firstDay.getFullYear();
+
     if (firstMonth === lastMonth) {
       return `${firstMonth} ${year}`;
     }
@@ -1406,11 +1442,11 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
 
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.85)',
+      background: '#161616',
       borderRadius: '16px',
       padding: '14px',
       marginBottom: '14px',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+      border: '1px solid #262626',
     }}>
       {/* Header with navigation */}
       <div style={{
@@ -1422,11 +1458,11 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
         <button
           onClick={goToPrevWeek}
           style={{
-            background: '#F5F5F7',
-            border: 'none',
+            background: '#262626',
+            border: '1px solid #333333',
             borderRadius: '10px',
             padding: '8px 12px',
-            color: '#6B7280',
+            color: '#888888',
             cursor: 'pointer',
             fontSize: '16px',
             fontWeight: 600,
@@ -1437,14 +1473,14 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
         </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ color: '#2D2A3E', fontWeight: 700, fontSize: '15px' }}>
+          <span style={{ color: '#FFFFFF', fontWeight: 700, fontSize: '15px' }}>
             {monthDisplay()}
           </span>
           {selectedDate !== todayStr && (
             <button
               onClick={goToToday}
               style={{
-                background: '#7C6AA0',
+                background: '#404040',
                 border: 'none',
                 borderRadius: '8px',
                 padding: '5px 10px',
@@ -1463,11 +1499,11 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
         <button
           onClick={goToNextWeek}
           style={{
-            background: '#F5F5F7',
-            border: 'none',
+            background: '#262626',
+            border: '1px solid #333333',
             borderRadius: '10px',
             padding: '8px 12px',
-            color: '#6B7280',
+            color: '#888888',
             cursor: 'pointer',
             fontSize: '16px',
             fontWeight: 600,
@@ -1477,7 +1513,7 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
           ›
         </button>
       </div>
-      
+
       {/* Week days */}
       <div style={{
         display: 'grid',
@@ -1490,25 +1526,25 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
             onClick={() => onSelectDate(day.date)}
             style={{
               background: day.isSelected
-                ? '#7C6AA0'
+                ? '#404040'
                 : day.isToday
-                  ? 'rgba(124, 106, 160, 0.15)'
+                  ? '#262626'
                   : 'transparent',
               border: 'none',
               borderRadius: '12px',
-              padding: '10px 4px',
+              padding: '8px 4px',
               cursor: 'pointer',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
-              gap: '3px',
+              gap: '2px',
               transition: 'all 0.2s ease',
             }}
           >
             <span style={{
               fontSize: '11px',
               fontWeight: 600,
-              color: day.isSelected ? 'rgba(255,255,255,0.9)' : '#8B8B9E',
+              color: day.isSelected ? '#FFFFFF' : '#666666',
               textTransform: 'uppercase',
               letterSpacing: '0.02em',
             }}>
@@ -1517,21 +1553,19 @@ const WeekCalendar = ({ selectedDate, onSelectDate, weekSchedules }) => {
             <span style={{
               fontSize: '18px',
               fontWeight: 800,
-              color: day.isSelected ? 'white' : '#2D2A3E',
+              color: day.isSelected ? 'white' : day.isToday ? '#FFFFFF' : '#888888',
               lineHeight: 1,
             }}>
               {day.dayNum}
             </span>
-            {/* Indicator dot for days with schedules */}
-            <div style={{
-              width: '5px',
-              height: '5px',
-              borderRadius: '50%',
-              background: day.hasSchedule
-                ? (day.isSelected ? 'rgba(255,255,255,0.8)' : '#5DAE8B')
-                : 'transparent',
+            {/* School day indicator */}
+            <span style={{
+              fontSize: '10px',
+              opacity: day.isSchoolDay ? 1 : 0,
               marginTop: '2px',
-            }} />
+            }}>
+              🏫
+            </span>
           </button>
         ))}
       </div>
@@ -1550,7 +1584,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
   const [geocoding, setGeocoding] = React.useState(false);
   const [locationAddress, setLocationAddress] = React.useState(settings.location_address || '');
   const [locationDisplay, setLocationDisplay] = React.useState(settings.location_display || '');
-  const [newActivity, setNewActivity] = React.useState({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'] });
+  const [newActivity, setNewActivity] = React.useState({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'], duration: null });
 
   // Load activities when Activities tab is opened
   React.useEffect(() => {
@@ -1577,7 +1611,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
     }
     try {
       await DB.createActivity(newActivity);
-      setNewActivity({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'] });
+      setNewActivity({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'], duration: null });
       await loadActivities();
       if (onActivitiesChange) onActivitiesChange();
     } catch (error) {
@@ -1659,10 +1693,10 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
     width: '100%',
     padding: '14px 16px',
     fontSize: '15px',
-    border: '2px solid #E5E7EB',
+    border: '1px solid #333333',
     borderRadius: '12px',
-    background: 'white',
-    color: '#2D2A3E',
+    background: '#1A1A1A',
+    color: '#FFFFFF',
     outline: 'none',
     boxSizing: 'border-box',
     transition: 'border-color 0.2s ease',
@@ -1673,7 +1707,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
     fontSize: '14px',
     fontWeight: 600,
     marginBottom: '8px',
-    color: '#2D2A3E',
+    color: '#FFFFFF',
   };
 
   const sectionButtonStyle = (active) => ({
@@ -1683,13 +1717,12 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
     border: 'none',
     borderRadius: '10px',
     cursor: 'pointer',
-    background: active ? '#7C6AA0' : '#F5F5F7',
-    color: active ? 'white' : '#6B7280',
+    background: active ? '#404040' : '#262626',
+    color: active ? 'white' : '#888888',
     flex: 1,
     transition: 'all 0.2s ease',
-    boxShadow: active ? '0 2px 8px rgba(124,106,160,0.3)' : 'none',
   });
-  
+
   return (
     <div style={{
       position: 'fixed',
@@ -1697,7 +1730,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
       left: 0,
       right: 0,
       bottom: 0,
-      background: 'rgba(0,0,0,0.5)',
+      background: 'rgba(0,0,0,0.8)',
       backdropFilter: 'blur(4px)',
       display: 'flex',
       alignItems: 'center',
@@ -1707,7 +1740,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
       boxSizing: 'border-box',
     }}>
       <div style={{
-        background: 'white',
+        background: '#161616',
         borderRadius: '24px',
         width: '100%',
         maxWidth: '480px',
@@ -1715,21 +1748,21 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '0 24px 48px rgba(0,0,0,0.16)',
+        border: '1px solid #262626',
       }}>
         {/* Header */}
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid #F0F0F2' }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid #262626' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ margin: 0, color: '#2D2A3E', fontSize: '22px', fontWeight: 700 }}>⚙️ Settings</h2>
+            <h2 style={{ margin: 0, color: '#FFFFFF', fontSize: '22px', fontWeight: 700 }}>⚙️ Settings</h2>
             <button onClick={onClose} style={{
-              background: '#F5F5F7',
-              border: 'none',
+              background: '#262626',
+              border: '1px solid #333333',
               borderRadius: '10px',
               width: '40px',
               height: '40px',
               fontSize: '18px',
               cursor: 'pointer',
-              color: '#6B7280',
+              color: '#888888',
               transition: 'all 0.2s ease',
             }}>✕</button>
           </div>
@@ -1744,7 +1777,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
         </div>
 
         {/* Content */}
-        <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, background: '#FAFAFA' }}>
+        <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, background: '#0F0F0F' }}>
           {activeSection === 'general' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Kids */}
@@ -1791,10 +1824,10 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                 <button onClick={addKid} style={{
                   width: '100%',
                   padding: '12px',
-                  background: 'white',
-                  border: '2px dashed #E5E7EB',
+                  background: '#1A1A1A',
+                  border: '2px dashed #333333',
                   borderRadius: '12px',
-                  color: '#7C6AA0',
+                  color: '#888888',
                   cursor: 'pointer',
                   fontSize: '14px',
                   fontWeight: 600,
@@ -1818,8 +1851,8 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                     disabled={geocoding}
                     style={{
                       padding: '12px 16px',
-                      background: geocoding ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.25)',
-                      border: 'none',
+                      background: geocoding ? '#262626' : '#333333',
+                      border: '1px solid #404040',
                       borderRadius: '12px',
                       color: 'white',
                       cursor: geocoding ? 'wait' : 'pointer',
@@ -1852,7 +1885,31 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                   <option value="fall">🍂 Fall</option>
                 </select>
               </div>
-              
+
+              {/* Timezone */}
+              <div>
+                <label style={labelStyle}>Timezone</label>
+                <select
+                  value={localSettings.timezone || 'America/Chicago'}
+                  onChange={(e) => updateSetting('timezone', e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="America/New_York">Eastern (New York)</option>
+                  <option value="America/Chicago">Central (Chicago)</option>
+                  <option value="America/Denver">Mountain (Denver)</option>
+                  <option value="America/Phoenix">Arizona (Phoenix)</option>
+                  <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                  <option value="America/Anchorage">Alaska (Anchorage)</option>
+                  <option value="Pacific/Honolulu">Hawaii (Honolulu)</option>
+                  <option value="Europe/London">UK (London)</option>
+                  <option value="Europe/Paris">Central Europe (Paris)</option>
+                  <option value="Europe/Berlin">Germany (Berlin)</option>
+                  <option value="Asia/Tokyo">Japan (Tokyo)</option>
+                  <option value="Asia/Shanghai">China (Shanghai)</option>
+                  <option value="Australia/Sydney">Australia (Sydney)</option>
+                </select>
+              </div>
+
               {/* Theme */}
               <div>
                 <label style={labelStyle}>App Theme</label>
@@ -1895,11 +1952,12 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                         padding: '12px 0',
                         border: 'none',
                         borderRadius: '10px',
-                        background: localSettings.school_days.includes(index) ? 'white' : 'rgba(255,255,255,0.2)',
-                        color: localSettings.school_days.includes(index) ? '#764ba2' : 'white',
+                        background: localSettings.school_days.includes(index) ? '#404040' : '#262626',
+                        color: localSettings.school_days.includes(index) ? '#FFFFFF' : '#888888',
                         cursor: 'pointer',
                         fontWeight: 700,
                         fontSize: '14px',
+                        transition: 'all 0.2s ease',
                       }}
                     >
                       {day}
@@ -1943,13 +2001,40 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                   <input type="number" value={localSettings.toddler_nap_duration} onChange={(e) => updateSetting('toddler_nap_duration', parseInt(e.target.value) || 0)} style={inputStyle} />
                 </div>
               </div>
+
+              {/* Activity Duration */}
+              <div>
+                <label style={labelStyle}>Activity Duration</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {[15, 30, 45, 60].map((duration) => (
+                    <button
+                      key={duration}
+                      onClick={() => updateSetting('activity_duration', duration)}
+                      style={{
+                        flex: 1,
+                        padding: '12px 0',
+                        border: 'none',
+                        borderRadius: '10px',
+                        background: localSettings.activity_duration === duration ? '#404040' : '#262626',
+                        color: localSettings.activity_duration === duration ? '#FFFFFF' : '#888888',
+                        cursor: 'pointer',
+                        fontWeight: 700,
+                        fontSize: '14px',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      {duration === 60 ? '1hr' : `${duration}m`}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
           {activeSection === 'activities' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Add New Activity Form */}
-              <div style={{ background: 'white', borderRadius: '16px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+              <div style={{ background: '#1A1A1A', borderRadius: '16px', padding: '16px', border: '1px solid #262626' }}>
                 <label style={{ ...labelStyle, marginBottom: '12px' }}>Add New Activity</label>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input
@@ -1992,8 +2077,8 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                             padding: '8px 4px',
                             border: 'none',
                             borderRadius: '8px',
-                            background: newActivity.seasons.includes(season) ? '#7C6AA0' : '#F5F5F7',
-                            color: newActivity.seasons.includes(season) ? 'white' : '#6B7280',
+                            background: newActivity.seasons.includes(season) ? '#404040' : '#262626',
+                            color: newActivity.seasons.includes(season) ? 'white' : '#666666',
                             cursor: 'pointer',
                             fontWeight: 600,
                             fontSize: '12px',
@@ -2005,11 +2090,42 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                       ))}
                     </div>
                   </div>
+                  <div>
+                    <label style={{ ...labelStyle, fontSize: '12px' }}>Duration (optional)</label>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                      {[
+                        { value: null, label: 'Default' },
+                        { value: 15, label: '15m' },
+                        { value: 30, label: '30m' },
+                        { value: 45, label: '45m' },
+                        { value: 60, label: '1hr' },
+                      ].map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={() => setNewActivity(prev => ({ ...prev, duration: opt.value }))}
+                          style={{
+                            flex: 1,
+                            padding: '8px 4px',
+                            border: 'none',
+                            borderRadius: '8px',
+                            background: newActivity.duration === opt.value ? '#404040' : '#262626',
+                            color: newActivity.duration === opt.value ? 'white' : '#666666',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '12px',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <button
                     onClick={handleAddActivity}
                     style={{
                       padding: '12px',
-                      background: '#7C6AA0',
+                      background: '#404040',
                       border: 'none',
                       borderRadius: '12px',
                       color: 'white',
@@ -2017,7 +2133,6 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                       fontWeight: 700,
                       fontSize: '14px',
                       transition: 'all 0.2s ease',
-                      boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
                     }}
                   >
                     + Add Activity
@@ -2031,7 +2146,7 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                   Activities ({activities.filter(a => a.seasons.includes(localSettings.current_season)).length} for {localSettings.current_season})
                 </label>
                 {activitiesLoading ? (
-                  <div style={{ textAlign: 'center', padding: '20px', color: '#6B7280' }}>
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#666666' }}>
                     Loading activities...
                   </div>
                 ) : (
@@ -2046,32 +2161,37 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
                           alignItems: 'center',
                           gap: '10px',
                           padding: '12px',
-                          background: `${ACTIVITY_COLORS[activity.type] || '#888'}25`,
+                          background: '#1A1A1A',
                           borderRadius: '12px',
-                          border: '1px solid rgba(0,0,0,0.05)',
+                          border: '1px solid #262626',
                         }}
                       >
                         <span style={{ fontSize: '24px' }}>{ACTIVITY_ICONS[activity.type] || '🎨'}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ color: '#2D2A3E', fontWeight: 700, fontSize: '14px' }}>{activity.name}</div>
+                          <div style={{ color: '#FFFFFF', fontWeight: 700, fontSize: '14px' }}>{activity.name}</div>
                           {activity.description && (
-                            <div style={{ color: '#6B7280', fontSize: '12px' }}>{activity.description}</div>
+                            <div style={{ color: '#666666', fontSize: '12px' }}>{activity.description}</div>
                           )}
-                          <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '4px', alignItems: 'center' }}>
                             {activity.seasons.map(s => (
                               <span key={s} style={{ fontSize: '10px' }}>
                                 {s === 'winter' ? '❄️' : s === 'spring' ? '🌸' : s === 'summer' ? '☀️' : '🍂'}
                               </span>
                             ))}
+                            {activity.duration && (
+                              <span style={{ fontSize: '10px', color: '#888888', marginLeft: '8px' }}>
+                                ⏱ {activity.duration === 60 ? '1hr' : `${activity.duration}m`}
+                              </span>
+                            )}
                           </div>
                         </div>
                         {activity.is_default ? (
-                          <span style={{ fontSize: '10px', color: '#8B8B9E', padding: '4px 8px', background: '#F5F5F7', borderRadius: '8px' }}>Default</span>
+                          <span style={{ fontSize: '10px', color: '#666666', padding: '4px 8px', background: '#262626', borderRadius: '8px' }}>Default</span>
                         ) : (
                           <button
                             onClick={() => handleDeleteActivity(activity.id)}
                             style={{
-                              background: '#FEE2E2',
+                              background: '#3D2020',
                               border: 'none',
                               borderRadius: '8px',
                               width: '32px',
@@ -2251,14 +2371,14 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
         </div>
         
         {/* Footer */}
-        <div style={{ padding: '16px 24px', borderTop: '1px solid #F0F0F2', display: 'flex', gap: '12px', background: 'white' }}>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid #262626', display: 'flex', gap: '12px', background: '#161616' }}>
           <button onClick={onClose} style={{
             flex: 1,
             padding: '14px',
-            border: '2px solid #E5E7EB',
+            border: '1px solid #333333',
             borderRadius: '12px',
-            background: 'white',
-            color: '#6B7280',
+            background: '#262626',
+            color: '#888888',
             cursor: 'pointer',
             fontSize: '15px',
             fontWeight: 600,
@@ -2269,13 +2389,12 @@ const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
             padding: '14px',
             border: 'none',
             borderRadius: '12px',
-            background: '#7C6AA0',
+            background: '#404040',
             color: 'white',
             cursor: 'pointer',
             fontSize: '15px',
             fontWeight: 700,
             transition: 'all 0.2s ease',
-            boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
           }}>Save Changes</button>
         </div>
       </div>
@@ -2342,14 +2461,19 @@ function ToddlerScheduleApp() {
       const loadedSettings = await DB.getSettings();
       setSettings(loadedSettings);
 
-      // Determine if today is a school day
-      const today = new Date().getDay();
+      // Get today in the configured timezone
+      const todayKey = getTodayKey(loadedSettings.timezone);
+      setSelectedDate(todayKey);
+
+      // Determine if today is a school day (using timezone)
+      const todayDate = new Date(todayKey + 'T12:00:00'); // Use noon to avoid DST issues
+      const today = todayDate.getDay();
       const isSchool = loadedSettings.school_days.includes(today);
       setScheduleType(isSchool ? 'school' : 'home');
 
       // Fetch weather and ratings
       fetchWeather();
-      fetchRatings(getTodayKey());
+      fetchRatings(todayKey);
     };
     init();
   }, []);
@@ -2380,7 +2504,7 @@ function ToddlerScheduleApp() {
       await DB.saveSchedule(targetDate, scheduleType, activities);
 
       // Only send HA notification for today
-      if (targetDate === getTodayKey()) {
+      if (targetDate === getTodayKey(settings.timezone)) {
         sendToHomeAssistant(settings, 'schedule_generated', {
           day_type: scheduleType,
           activities,
@@ -2412,10 +2536,12 @@ function ToddlerScheduleApp() {
     // Fetch ratings for the selected date
     fetchRatings(targetDate);
     
-    // Update week schedules
-    const weekStart = new Date(targetDate);
+    // Update week schedules (using local date parsing to avoid timezone issues)
+    const [year, month, day] = targetDate.split('-').map(Number);
+    const weekStart = new Date(year, month - 1, day);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-    fetchWeekSchedules(weekStart.toISOString().split('T')[0], scheduleType);
+    const weekStartStr = `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, '0')}-${String(weekStart.getDate()).padStart(2, '0')}`;
+    fetchWeekSchedules(weekStartStr, scheduleType);
   }, [settings, scheduleType, selectedDate, fetchRatings, fetchWeekSchedules]);
 
   // Regenerate a single activity
@@ -2473,11 +2599,12 @@ function ToddlerScheduleApp() {
     buildFullSchedule();
   }, [buildFullSchedule]);
 
-  // Update time every second for smooth countdown
+  // Update time every second for smooth countdown (using timezone from settings)
   React.useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(getCurrentMinutes()), 1000);
+    if (!settings) return;
+    const interval = setInterval(() => setCurrentTime(getCurrentMinutes(settings.timezone)), 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [settings]);
 
   // Find current activity
   const currentActivityIndex = schedule.findIndex(activity => {
@@ -2521,14 +2648,22 @@ function ToddlerScheduleApp() {
     progress = ((currentTime - start) / (end - start)) * 100;
   }
 
-  // Time display
+  // Time display (using timezone from settings)
   const now = new Date();
-  const timeDisplay = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const dayDisplay = dayNames[now.getDay()];
+  const timezone = settings?.timezone;
+  const timeDisplay = now.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: timezone,
+  });
+  const dayDisplay = now.toLocaleDateString('en-US', {
+    weekday: 'long',
+    timeZone: timezone,
+  });
 
-  // Check if viewing today
-  const isViewingToday = selectedDate === getTodayKey();
+  // Check if viewing today (using timezone)
+  const isViewingToday = selectedDate === getTodayKey(timezone);
   
   // Only show current activity highlight when viewing today
   const displayCurrentIndex = isViewingToday ? currentActivityIndex : -1;
@@ -2541,7 +2676,11 @@ function ToddlerScheduleApp() {
 
   const handleDateChange = (newDate) => {
     setSelectedDate(newDate);
-    buildFullSchedule(newDate);
+    // Determine schedule type based on selected date's day of week
+    const [year, month, day] = newDate.split('-').map(Number);
+    const selectedDayOfWeek = new Date(year, month - 1, day).getDay();
+    const isSchool = settings.school_days.includes(selectedDayOfWeek);
+    setScheduleType(isSchool ? 'school' : 'home');
   };
 
   const handleSaveSettings = async (newSettings) => {
@@ -2558,7 +2697,7 @@ function ToddlerScheduleApp() {
     return <LoadingSpinner />;
   }
 
-  const theme = THEMES[settings.theme] || THEMES.lavender;
+  const theme = THEMES.default;
 
   return (
     <div style={{
@@ -2570,7 +2709,8 @@ function ToddlerScheduleApp() {
       display: 'flex',
       flexDirection: 'column',
       gap: '16px',
-      maxWidth: '540px',
+      maxWidth: '900px',
+      width: '100%',
       margin: '0 auto',
     }}>
       {showSettings && (
@@ -2587,10 +2727,10 @@ function ToddlerScheduleApp() {
 
       {/* Compact Header */}
       <div style={{
-        background: 'rgba(255,255,255,0.85)',
+        background: '#161616',
         borderRadius: '20px',
         padding: '18px',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+        border: '1px solid #262626',
       }}>
         {/* Top Row: Time, Weather, Settings */}
         <div style={{
@@ -2600,7 +2740,7 @@ function ToddlerScheduleApp() {
           gap: '12px',
         }}>
           {/* Time & Date */}
-          <div style={{ color: '#2D2A3E' }}>
+          <div style={{ color: '#FFFFFF' }}>
             <div style={{
               fontSize: '32px',
               fontWeight: 800,
@@ -2612,7 +2752,7 @@ function ToddlerScheduleApp() {
             <div style={{
               fontSize: '14px',
               fontWeight: 600,
-              color: '#6B7280',
+              color: '#888888',
               marginTop: '4px',
             }}>
               {dayDisplay} · {now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
@@ -2626,8 +2766,8 @@ function ToddlerScheduleApp() {
           <button
             onClick={() => setShowSettings(true)}
             style={{
-              background: '#F5F5F7',
-              border: 'none',
+              background: '#262626',
+              border: '1px solid #333333',
               borderRadius: '12px',
               width: '44px',
               height: '44px',
@@ -2641,7 +2781,7 @@ function ToddlerScheduleApp() {
           </button>
         </div>
 
-        {/* Bottom Row: Day Type Toggle & Refresh */}
+        {/* Bottom Row: Schedule type indicator & Refresh */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -2649,47 +2789,19 @@ function ToddlerScheduleApp() {
           marginTop: '14px',
           gap: '10px',
         }}>
-          {/* Day Type Toggle - Segmented Control Style */}
+          {/* Schedule type indicator */}
           <div style={{
             display: 'flex',
-            background: '#F5F5F7',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '10px 16px',
+            background: '#262626',
             borderRadius: '12px',
-            padding: '4px',
           }}>
-            <button
-              onClick={() => setScheduleType('school')}
-              style={{
-                padding: '10px 18px',
-                fontSize: '14px',
-                fontWeight: 700,
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                background: scheduleType === 'school' ? 'white' : 'transparent',
-                color: scheduleType === 'school' ? '#7C6AA0' : '#6B7280',
-                boxShadow: scheduleType === 'school' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              🏫 School
-            </button>
-            <button
-              onClick={() => setScheduleType('home')}
-              style={{
-                padding: '10px 18px',
-                fontSize: '14px',
-                fontWeight: 700,
-                border: 'none',
-                borderRadius: '10px',
-                cursor: 'pointer',
-                background: scheduleType === 'home' ? 'white' : 'transparent',
-                color: scheduleType === 'home' ? '#7C6AA0' : '#6B7280',
-                boxShadow: scheduleType === 'home' ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              🏠 Home
-            </button>
+            <span style={{ fontSize: '18px' }}>{scheduleType === 'school' ? '🏫' : '🏠'}</span>
+            <span style={{ color: '#FFFFFF', fontWeight: 600, fontSize: '14px' }}>
+              {scheduleType === 'school' ? 'School Day' : 'Home Day'}
+            </span>
           </div>
 
           {/* Refresh Button */}
@@ -2703,14 +2815,13 @@ function ToddlerScheduleApp() {
               border: 'none',
               borderRadius: '10px',
               cursor: loading ? 'not-allowed' : 'pointer',
-              background: '#7C6AA0',
+              background: '#404040',
               color: 'white',
               opacity: loading ? 0.5 : 1,
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               transition: 'all 0.2s ease',
-              boxShadow: '0 2px 8px rgba(124,106,160,0.3)',
             }}
           >
             🎲 <span>Shuffle</span>
@@ -2723,6 +2834,7 @@ function ToddlerScheduleApp() {
         selectedDate={selectedDate}
         onSelectDate={handleDateChange}
         weekSchedules={weekSchedules}
+        schoolDays={settings.school_days}
       />
 
       {loading ? (
@@ -2742,24 +2854,24 @@ function ToddlerScheduleApp() {
           )}
 
           <div style={{
-            background: 'rgba(255,255,255,0.8)',
+            background: '#161616',
             borderRadius: '20px',
             padding: '20px',
-            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+            border: '1px solid #262626',
             flex: 1,
             display: 'flex',
             flexDirection: 'column',
             minHeight: 0,
           }}>
-            <div style={{ textAlign: 'center', color: '#2D2A3E', fontSize: '18px', fontWeight: 700, marginBottom: '16px', flexShrink: 0, letterSpacing: '-0.01em' }}>
+            <div style={{ textAlign: 'center', color: '#FFFFFF', fontSize: '18px', fontWeight: 700, marginBottom: '16px', flexShrink: 0, letterSpacing: '-0.01em' }}>
               {isViewingToday ? "Today's Schedule" : new Date(selectedDate + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
               {upcomingActivities.map((activity) => {
                 // For past dates, all activities are past. For future dates, none are.
-                const isPastActivity = isViewingToday 
+                const isPastActivity = isViewingToday
                   ? currentTime >= parseTime(activity.end)
-                  : selectedDate < getTodayKey();
+                  : selectedDate < getTodayKey(timezone);
                 
                 return (
                   <ActivityCard

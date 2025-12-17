@@ -135,6 +135,7 @@ const initDatabase = async () => {
       type TEXT NOT NULL,
       description TEXT,
       seasons TEXT NOT NULL DEFAULT '["winter","spring","summer","fall"]',
+      duration INTEGER DEFAULT NULL,
       is_default INTEGER DEFAULT 0,
       thumbs_up INTEGER DEFAULT 0,
       thumbs_down INTEGER DEFAULT 0,
@@ -153,12 +154,13 @@ const initDatabase = async () => {
     )
   `);
 
-  // Migration: Add thumbs_up and thumbs_down columns to activities if they don't exist
+  // Migration: Add thumbs_up, thumbs_down, and duration columns to activities if they don't exist
   try {
     const tableInfo = queryAll("PRAGMA table_info(activities)");
     const hasThumbsUp = tableInfo.some(col => col.name === 'thumbs_up');
     const hasThumbsDown = tableInfo.some(col => col.name === 'thumbs_down');
-    
+    const hasDuration = tableInfo.some(col => col.name === 'duration');
+
     if (!hasThumbsUp) {
       db.run('ALTER TABLE activities ADD COLUMN thumbs_up INTEGER DEFAULT 0');
       console.log('📊 Added thumbs_up column to activities');
@@ -166,6 +168,10 @@ const initDatabase = async () => {
     if (!hasThumbsDown) {
       db.run('ALTER TABLE activities ADD COLUMN thumbs_down INTEGER DEFAULT 0');
       console.log('📊 Added thumbs_down column to activities');
+    }
+    if (!hasDuration) {
+      db.run('ALTER TABLE activities ADD COLUMN duration INTEGER DEFAULT NULL');
+      console.log('📊 Added duration column to activities');
     }
   } catch (err) {
     console.log('Migration check for activities columns:', err.message);
@@ -453,7 +459,7 @@ app.get('/api/activities', (req, res) => {
 
 app.post('/api/activities', (req, res) => {
   try {
-    const { name, type, description, seasons } = req.body;
+    const { name, type, description, seasons, duration } = req.body;
 
     if (!name || !type) {
       return res.status(400).json({ error: 'Name and type are required' });
@@ -464,8 +470,8 @@ app.post('/api/activities', (req, res) => {
     }
 
     db.run(
-      'INSERT INTO activities (name, type, description, seasons, is_default) VALUES (?, ?, ?, ?, 0)',
-      [name, type, description || '', JSON.stringify(seasons)]
+      'INSERT INTO activities (name, type, description, seasons, duration, is_default) VALUES (?, ?, ?, ?, ?, 0)',
+      [name, type, description || '', JSON.stringify(seasons), duration || null]
     );
 
     const lastId = queryOne('SELECT last_insert_rowid() as id');
@@ -474,7 +480,7 @@ app.post('/api/activities', (req, res) => {
     res.json({
       success: true,
       id: lastId.id,
-      activity: { id: lastId.id, name, type, description: description || '', seasons, is_default: false }
+      activity: { id: lastId.id, name, type, description: description || '', seasons, duration: duration || null, is_default: false }
     });
   } catch (error) {
     console.error('Error creating activity:', error);

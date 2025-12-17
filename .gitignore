@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Database files
+*.db
+data/*.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Claude local settings
+.claude/settings.local.json
+
+# Build output
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.temp

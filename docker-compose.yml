@@ -11,7 +11,7 @@ version: '3.8'
 
 services:
   toddler-schedule:
-    build: .
+    image: ghcr.io/jpittelkow/toddler-schedule-app:latest
     container_name: toddler-schedule
     restart: unless-stopped
     ports:

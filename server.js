@@ -80,9 +80,21 @@ db.exec(`
     started_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  -- Custom activities table
+  CREATE TABLE IF NOT EXISTS activities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,
+    description TEXT,
+    seasons TEXT NOT NULL DEFAULT '["winter","spring","summer","fall"]',
+    is_default INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   -- Create indexes
   CREATE INDEX IF NOT EXISTS idx_schedules_date ON schedules(date);
   CREATE INDEX IF NOT EXISTS idx_activity_history_date ON activity_history(started_at);
+  CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(type);
 `);
 
 // ===========================================
@@ -123,6 +135,54 @@ const initDefaults = () => {
     const insertKid = db.prepare('INSERT INTO kids (name, age, color) VALUES (?, ?, ?)');
     insertKid.run('Big Brother', 3, '#4D96FF');
     insertKid.run('Little Brother', 1, '#6BCB77');
+  }
+
+  // Seed default activities if none exist
+  const activitiesCount = db.prepare('SELECT COUNT(*) as count FROM activities').get();
+  if (activitiesCount.count === 0) {
+    const defaultActivities = [
+      // Indoor activities (all seasons)
+      { name: 'Block Tower Building', type: 'building', description: 'Build tall towers together', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Dance Party', type: 'dance', description: 'Morning wiggles out', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Sensory Bins', type: 'sensory', description: 'Rice and scoop play', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Playdough Fun', type: 'craft', description: 'Squish and create', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Library Trip', type: 'errand', description: 'Story time and books', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Target Adventure', type: 'errand', description: 'Walk around, get out of house', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Basement Play', type: 'basement', description: 'Burn energy downstairs', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Puzzle Time', type: 'puzzle', description: 'Calm puzzle solving', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Blanket Fort', type: 'fort', description: 'Build a cozy hideout', seasons: ['winter', 'spring', 'fall'] },
+      { name: 'Story Time', type: 'reading', description: 'Calm reading together', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Coloring Books', type: 'craft', description: 'Quiet coloring time', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Music Time', type: 'music', description: 'Instruments and singing', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      { name: 'Cooking Together', type: 'cooking', description: 'Help in the kitchen', seasons: ['winter', 'spring', 'summer', 'fall'] },
+      // Outdoor activities (warmer seasons)
+      { name: 'Backyard Bubbles', type: 'outdoor', description: 'Chase bubbles outside', seasons: ['spring', 'summer'] },
+      { name: 'Sidewalk Chalk', type: 'outdoor', description: 'Draw on the driveway', seasons: ['spring', 'summer', 'fall'] },
+      { name: 'Water Table', type: 'sensory', description: 'Splash and pour', seasons: ['summer'] },
+      { name: 'Nature Walk', type: 'outdoor', description: 'Explore the neighborhood', seasons: ['spring', 'summer', 'fall'] },
+      { name: 'Playground', type: 'outdoor', description: 'Slides and swings', seasons: ['spring', 'summer', 'fall'] },
+      { name: 'Splash Pad', type: 'outdoor', description: 'Cool off with water play', seasons: ['summer'] },
+      { name: 'Bug Hunt', type: 'outdoor', description: 'Find crawly friends', seasons: ['spring', 'summer', 'fall'] },
+      { name: 'Kiddie Pool', type: 'outdoor', description: 'Backyard water fun', seasons: ['summer'] },
+      { name: 'Popsicles & Books', type: 'reading', description: 'Cool treat and stories', seasons: ['summer'] },
+      // Winter specific
+      { name: 'Snow Play', type: 'snow', description: 'Build snowmen and play', seasons: ['winter'] },
+      { name: 'Hot Cocoa Time', type: 'snack', description: 'Warm up with cocoa', seasons: ['winter'] },
+    ];
+
+    const insertActivity = db.prepare(`
+      INSERT INTO activities (name, type, description, seasons, is_default)
+      VALUES (?, ?, ?, ?, 1)
+    `);
+
+    for (const activity of defaultActivities) {
+      insertActivity.run(
+        activity.name,
+        activity.type,
+        activity.description,
+        JSON.stringify(activity.seasons)
+      );
+    }
   }
 };
 
@@ -300,15 +360,303 @@ app.post('/api/activity-log', (req, res) => {
 app.get('/api/activity-history', (req, res) => {
   try {
     const rows = db.prepare(`
-      SELECT * FROM activity_history 
+      SELECT * FROM activity_history
       WHERE started_at >= datetime('now', '-7 days')
       ORDER BY started_at DESC
     `).all();
-    
+
     res.json(rows);
   } catch (error) {
     console.error('Error getting activity history:', error);
     res.status(500).json({ error: 'Failed to get activity history' });
+  }
+});
+
+// ===========================================
+// ACTIVITIES CRUD
+// ===========================================
+
+// Get all activities (optionally filtered by season)
+app.get('/api/activities', (req, res) => {
+  try {
+    const { season } = req.query;
+    let rows;
+
+    if (season) {
+      // Filter activities that include this season
+      rows = db.prepare(`
+        SELECT id, name, type, description, seasons, is_default, created_at
+        FROM activities
+        ORDER BY is_default DESC, name ASC
+      `).all();
+
+      // Filter in JS since SQLite JSON support is limited
+      rows = rows.filter(row => {
+        const seasons = JSON.parse(row.seasons);
+        return seasons.includes(season);
+      });
+    } else {
+      rows = db.prepare(`
+        SELECT id, name, type, description, seasons, is_default, created_at
+        FROM activities
+        ORDER BY is_default DESC, name ASC
+      `).all();
+    }
+
+    // Parse seasons JSON for each row
+    const activities = rows.map(row => ({
+      ...row,
+      seasons: JSON.parse(row.seasons),
+      is_default: row.is_default === 1,
+    }));
+
+    res.json({ activities });
+  } catch (error) {
+    console.error('Error getting activities:', error);
+    res.status(500).json({ error: 'Failed to get activities' });
+  }
+});
+
+// Create a new activity
+app.post('/api/activities', (req, res) => {
+  try {
+    const { name, type, description, seasons } = req.body;
+
+    // Validation
+    if (!name || !type) {
+      return res.status(400).json({ error: 'Name and type are required' });
+    }
+
+    if (!seasons || !Array.isArray(seasons) || seasons.length === 0) {
+      return res.status(400).json({ error: 'At least one season must be selected' });
+    }
+
+    const validSeasons = ['winter', 'spring', 'summer', 'fall'];
+    if (!seasons.every(s => validSeasons.includes(s))) {
+      return res.status(400).json({ error: 'Invalid season value' });
+    }
+
+    const result = db.prepare(`
+      INSERT INTO activities (name, type, description, seasons, is_default)
+      VALUES (?, ?, ?, ?, 0)
+    `).run(name, type, description || '', JSON.stringify(seasons));
+
+    res.json({
+      success: true,
+      id: result.lastInsertRowid,
+      activity: {
+        id: result.lastInsertRowid,
+        name,
+        type,
+        description: description || '',
+        seasons,
+        is_default: false,
+      }
+    });
+  } catch (error) {
+    console.error('Error creating activity:', error);
+    res.status(500).json({ error: 'Failed to create activity' });
+  }
+});
+
+// Delete an activity
+app.delete('/api/activities/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if it's a default activity
+    const activity = db.prepare('SELECT is_default FROM activities WHERE id = ?').get(id);
+
+    if (!activity) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+
+    if (activity.is_default === 1) {
+      return res.status(400).json({ error: 'Cannot delete default activities' });
+    }
+
+    db.prepare('DELETE FROM activities WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting activity:', error);
+    res.status(500).json({ error: 'Failed to delete activity' });
+  }
+});
+
+// ===========================================
+// WEATHER & GEOCODING
+// ===========================================
+
+// Weather code to description mapping
+const WEATHER_DESCRIPTIONS = {
+  0: 'Clear sky',
+  1: 'Mainly clear',
+  2: 'Partly cloudy',
+  3: 'Overcast',
+  45: 'Foggy',
+  48: 'Depositing rime fog',
+  51: 'Light drizzle',
+  53: 'Moderate drizzle',
+  55: 'Dense drizzle',
+  56: 'Light freezing drizzle',
+  57: 'Dense freezing drizzle',
+  61: 'Slight rain',
+  63: 'Moderate rain',
+  65: 'Heavy rain',
+  66: 'Light freezing rain',
+  67: 'Heavy freezing rain',
+  71: 'Slight snow',
+  73: 'Moderate snow',
+  75: 'Heavy snow',
+  77: 'Snow grains',
+  80: 'Slight rain showers',
+  81: 'Moderate rain showers',
+  82: 'Violent rain showers',
+  85: 'Slight snow showers',
+  86: 'Heavy snow showers',
+  95: 'Thunderstorm',
+  96: 'Thunderstorm with slight hail',
+  99: 'Thunderstorm with heavy hail',
+};
+
+// Geocode address to coordinates
+app.post('/api/geocode', async (req, res) => {
+  try {
+    const { address } = req.body;
+
+    if (!address) {
+      return res.status(400).json({ error: 'Address is required' });
+    }
+
+    // Call Nominatim API (OpenStreetMap geocoding)
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`,
+      {
+        headers: {
+          'User-Agent': 'ToddlerScheduleApp/1.0',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Geocoding service unavailable');
+    }
+
+    const data = await response.json();
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'Address not found. Try a more specific address.' });
+    }
+
+    const result = data[0];
+    const lat = parseFloat(result.lat);
+    const lon = parseFloat(result.lon);
+    const displayName = result.display_name;
+
+    // Save to settings
+    const updateSetting = db.prepare(`
+      INSERT INTO settings (key, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+    `);
+
+    updateSetting.run('location_address', address, address);
+    updateSetting.run('location_lat', lat.toString(), lat.toString());
+    updateSetting.run('location_lon', lon.toString(), lon.toString());
+    updateSetting.run('location_display', displayName, displayName);
+
+    // Clear weather cache so it fetches fresh data
+    updateSetting.run('weather_cache', '', '');
+
+    res.json({
+      success: true,
+      lat,
+      lon,
+      displayName,
+    });
+  } catch (error) {
+    console.error('Error geocoding address:', error);
+    res.status(500).json({ error: 'Failed to geocode address' });
+  }
+});
+
+// Get weather for stored location
+app.get('/api/weather', async (req, res) => {
+  try {
+    // Get location and cache from settings
+    const settings = {};
+    const rows = db.prepare(`
+      SELECT key, value FROM settings
+      WHERE key IN ('location_lat', 'location_lon', 'location_display', 'weather_cache')
+    `).all();
+
+    for (const row of rows) {
+      settings[row.key] = row.value;
+    }
+
+    // Check if location is set
+    if (!settings.location_lat || !settings.location_lon) {
+      return res.status(400).json({
+        error: 'Location not set',
+        message: 'Please set your location in settings first',
+      });
+    }
+
+    // Check cache (30 minute expiry)
+    if (settings.weather_cache) {
+      try {
+        const cached = JSON.parse(settings.weather_cache);
+        const cacheTime = new Date(cached.timestamp);
+        const now = new Date();
+        const diffMinutes = (now - cacheTime) / (1000 * 60);
+
+        if (diffMinutes < 30) {
+          return res.json(cached.data);
+        }
+      } catch (e) {
+        // Cache invalid, fetch fresh
+      }
+    }
+
+    // Fetch from Open-Meteo API
+    const lat = settings.location_lat;
+    const lon = settings.location_lon;
+    const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&temperature_unit=fahrenheit&timezone=auto`;
+
+    const response = await fetch(weatherUrl);
+
+    if (!response.ok) {
+      throw new Error('Weather service unavailable');
+    }
+
+    const data = await response.json();
+
+    const weatherData = {
+      temperature: Math.round(data.current.temperature_2m),
+      temperatureUnit: 'F',
+      weatherCode: data.current.weather_code,
+      weatherDescription: WEATHER_DESCRIPTIONS[data.current.weather_code] || 'Unknown',
+      high: Math.round(data.daily.temperature_2m_max[0]),
+      low: Math.round(data.daily.temperature_2m_min[0]),
+      location: settings.location_display || 'Unknown location',
+    };
+
+    // Cache the result
+    const cacheData = {
+      timestamp: new Date().toISOString(),
+      data: weatherData,
+    };
+
+    db.prepare(`
+      INSERT INTO settings (key, value, updated_at)
+      VALUES ('weather_cache', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+    `).run(JSON.stringify(cacheData), JSON.stringify(cacheData));
+
+    res.json(weatherData);
+  } catch (error) {
+    console.error('Error fetching weather:', error);
+    res.status(500).json({ error: 'Failed to fetch weather' });
   }
 });
 

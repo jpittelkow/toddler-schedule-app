@@ -112,6 +112,89 @@ const DB = {
     }
   },
 
+  // Weather API
+  async getWeather() {
+    try {
+      const response = await fetch(`${API_BASE}/weather`);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to fetch weather');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to get weather:', error);
+      return null;
+    }
+  },
+
+  async geocodeAddress(address) {
+    try {
+      const response = await fetch(`${API_BASE}/geocode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to geocode address');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to geocode address:', error);
+      throw error;
+    }
+  },
+
+  // Activities API
+  async getActivities(season) {
+    try {
+      const url = season
+        ? `${API_BASE}/activities?season=${season}`
+        : `${API_BASE}/activities`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Failed to fetch activities');
+      const data = await response.json();
+      return data.activities;
+    } catch (error) {
+      console.error('Failed to get activities:', error);
+      return [];
+    }
+  },
+
+  async createActivity(activity) {
+    try {
+      const response = await fetch(`${API_BASE}/activities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(activity),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create activity');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to create activity:', error);
+      throw error;
+    }
+  },
+
+  async deleteActivity(id) {
+    try {
+      const response = await fetch(`${API_BASE}/activities/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete activity');
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('Failed to delete activity:', error);
+      throw error;
+    }
+  },
+
   getDefaultSettings() {
     return {
       home_assistant_url: 'http://homeassistant.local:8123',
@@ -169,6 +252,38 @@ const THEMES = {
   sunset: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
   ocean: 'linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)',
   forest: 'linear-gradient(135deg, #134E5E 0%, #71B280 100%)',
+};
+
+// Weather code to emoji mapping (WMO codes)
+const WEATHER_ICONS = {
+  0: '☀️',      // Clear sky
+  1: '🌤️',      // Mainly clear
+  2: '⛅',      // Partly cloudy
+  3: '☁️',      // Overcast
+  45: '🌫️',     // Foggy
+  48: '🌫️',     // Depositing rime fog
+  51: '🌧️',     // Light drizzle
+  53: '🌧️',     // Moderate drizzle
+  55: '🌧️',     // Dense drizzle
+  56: '🌧️',     // Light freezing drizzle
+  57: '🌧️',     // Dense freezing drizzle
+  61: '🌧️',     // Slight rain
+  63: '🌧️',     // Moderate rain
+  65: '🌧️',     // Heavy rain
+  66: '🌧️',     // Light freezing rain
+  67: '🌧️',     // Heavy freezing rain
+  71: '🌨️',     // Slight snow
+  73: '🌨️',     // Moderate snow
+  75: '❄️',     // Heavy snow
+  77: '🌨️',     // Snow grains
+  80: '🌦️',     // Slight rain showers
+  81: '🌦️',     // Moderate rain showers
+  82: '🌧️',     // Violent rain showers
+  85: '🌨️',     // Slight snow showers
+  86: '🌨️',     // Heavy snow showers
+  95: '⛈️',     // Thunderstorm
+  96: '⛈️',     // Thunderstorm with slight hail
+  99: '⛈️',     // Thunderstorm with heavy hail
 };
 
 // ===========================================
@@ -477,9 +592,39 @@ const buildScheduleTemplate = (settings, isSchoolDay) => {
 };
 
 // ===========================================
-// ACTIVITY GENERATION (Default fallback)
+// ACTIVITY GENERATION
 // ===========================================
-const getDefaultActivities = (dayType, season) => {
+
+// Generate activities for schedule slots from database activities
+const generateActivitiesFromDB = async (season) => {
+  const dbActivities = await DB.getActivities(season);
+  if (!dbActivities || dbActivities.length === 0) {
+    // Fallback to hardcoded defaults if DB is empty
+    return getDefaultActivitiesFallback(season);
+  }
+
+  const slots = [
+    'morning-play', 'early-morning', 'baby-morning', 'morning-activity',
+    'late-morning', 'outing', 'pre-lunch', 'quiet-time', 'afternoon-activity', 'wind-down'
+  ];
+
+  const activities = {};
+  const shuffled = [...dbActivities].sort(() => Math.random() - 0.5);
+
+  slots.forEach((slot, index) => {
+    const activity = shuffled[index % shuffled.length];
+    activities[slot] = {
+      name: activity.name,
+      type: activity.type,
+      description: activity.description,
+    };
+  });
+
+  return activities;
+};
+
+// Fallback for when DB is empty (shouldn't happen normally)
+const getDefaultActivitiesFallback = (season) => {
   const winterActivities = {
     'morning-play': { name: 'Block Tower Building', type: 'building', description: 'Build tall towers together' },
     'early-morning': { name: 'Dance Party', type: 'dance', description: 'Morning wiggles out' },
@@ -492,7 +637,7 @@ const getDefaultActivities = (dayType, season) => {
     'afternoon-activity': { name: 'Blanket Fort', type: 'fort', description: 'Build a cozy hideout' },
     'wind-down': { name: 'Story Time', type: 'reading', description: 'Calm reading together' },
   };
-  
+
   const summerActivities = {
     'morning-play': { name: 'Backyard Bubbles', type: 'outdoor', description: 'Chase bubbles outside' },
     'early-morning': { name: 'Sidewalk Chalk', type: 'outdoor', description: 'Draw on the driveway' },
@@ -505,8 +650,19 @@ const getDefaultActivities = (dayType, season) => {
     'afternoon-activity': { name: 'Kiddie Pool', type: 'outdoor', description: 'Backyard water fun' },
     'wind-down': { name: 'Popsicles & Books', type: 'reading', description: 'Cool treat and stories' },
   };
-  
-  return season === 'winter' ? winterActivities : summerActivities;
+
+  return season === 'summer' ? summerActivities : winterActivities;
+};
+
+// Get a random activity from DB for refreshing a single slot
+const getRandomActivityFromDB = async (season, excludeNames = []) => {
+  const dbActivities = await DB.getActivities(season);
+  if (!dbActivities || dbActivities.length === 0) return null;
+
+  const available = dbActivities.filter(a => !excludeNames.includes(a.name));
+  if (available.length === 0) return dbActivities[Math.floor(Math.random() * dbActivities.length)];
+
+  return available[Math.floor(Math.random() * available.length)];
 };
 
 // ===========================================
@@ -889,40 +1045,199 @@ const LoadingSpinner = () => (
   </div>
 );
 
+// Weather Display Component
+const WeatherDisplay = ({ weather, loading }) => {
+  if (loading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        padding: '12px 20px',
+        background: 'rgba(255,255,255,0.15)',
+        borderRadius: '20px',
+        marginTop: '12px',
+      }}>
+        <div style={{ fontSize: '20px', animation: 'spin 1s linear infinite' }}>🌀</div>
+        <span style={{ color: 'white', fontSize: '14px', fontWeight: 600 }}>Loading weather...</span>
+      </div>
+    );
+  }
+
+  if (!weather) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        padding: '12px 20px',
+        background: 'rgba(255,255,255,0.1)',
+        borderRadius: '20px',
+        marginTop: '12px',
+      }}>
+        <span style={{ fontSize: '20px' }}>🌡️</span>
+        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: '14px', fontWeight: 600 }}>
+          Set location in settings for weather
+        </span>
+      </div>
+    );
+  }
+
+  const icon = WEATHER_ICONS[weather.weatherCode] || '🌡️';
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '16px',
+      padding: '12px 24px',
+      background: 'rgba(255,255,255,0.15)',
+      borderRadius: '20px',
+      marginTop: '12px',
+      flexWrap: 'wrap',
+    }}>
+      {/* Weather icon and temp */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '36px' }}>{icon}</span>
+        <div style={{ textAlign: 'left' }}>
+          <div style={{ fontSize: '28px', fontWeight: 800, color: 'white', lineHeight: 1 }}>
+            {weather.temperature}°F
+          </div>
+          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', fontWeight: 600 }}>
+            {weather.weatherDescription}
+          </div>
+        </div>
+      </div>
+
+      {/* High/Low */}
+      <div style={{
+        display: 'flex',
+        gap: '12px',
+        fontSize: '14px',
+        fontWeight: 600,
+        color: 'rgba(255,255,255,0.9)',
+      }}>
+        <span>↑ {weather.high}°</span>
+        <span>↓ {weather.low}°</span>
+      </div>
+    </div>
+  );
+};
+
 // ===========================================
 // SETTINGS PANEL
 // ===========================================
-const SettingsPanel = ({ settings, onSave, onClose }) => {
+const SettingsPanel = ({ settings, onSave, onClose, onActivitiesChange }) => {
   const [localSettings, setLocalSettings] = React.useState(settings);
   const [activeSection, setActiveSection] = React.useState('general');
-  
+  const [activities, setActivities] = React.useState([]);
+  const [activitiesLoading, setActivitiesLoading] = React.useState(false);
+  const [geocoding, setGeocoding] = React.useState(false);
+  const [locationAddress, setLocationAddress] = React.useState(settings.location_address || '');
+  const [locationDisplay, setLocationDisplay] = React.useState(settings.location_display || '');
+  const [newActivity, setNewActivity] = React.useState({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'] });
+
+  // Load activities when Activities tab is opened
+  React.useEffect(() => {
+    if (activeSection === 'activities') {
+      loadActivities();
+    }
+  }, [activeSection]);
+
+  const loadActivities = async () => {
+    setActivitiesLoading(true);
+    const acts = await DB.getActivities();
+    setActivities(acts);
+    setActivitiesLoading(false);
+  };
+
+  const handleAddActivity = async () => {
+    if (!newActivity.name.trim()) {
+      alert('Please enter an activity name');
+      return;
+    }
+    if (newActivity.seasons.length === 0) {
+      alert('Please select at least one season');
+      return;
+    }
+    try {
+      await DB.createActivity(newActivity);
+      setNewActivity({ name: '', type: 'activity', description: '', seasons: ['winter', 'spring', 'summer', 'fall'] });
+      await loadActivities();
+      if (onActivitiesChange) onActivitiesChange();
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const handleDeleteActivity = async (id) => {
+    if (!confirm('Delete this activity?')) return;
+    try {
+      await DB.deleteActivity(id);
+      await loadActivities();
+      if (onActivitiesChange) onActivitiesChange();
+    } catch (error) {
+      alert(error.message);
+    }
+  };
+
+  const toggleNewActivitySeason = (season) => {
+    setNewActivity(prev => ({
+      ...prev,
+      seasons: prev.seasons.includes(season)
+        ? prev.seasons.filter(s => s !== season)
+        : [...prev.seasons, season]
+    }));
+  };
+
+  const handleGeocode = async () => {
+    if (!locationAddress.trim()) {
+      alert('Please enter an address');
+      return;
+    }
+    setGeocoding(true);
+    try {
+      const result = await DB.geocodeAddress(locationAddress);
+      setLocationDisplay(result.displayName);
+      updateSetting('location_address', locationAddress);
+      updateSetting('location_display', result.displayName);
+      alert('Location updated! Weather will refresh shortly.');
+    } catch (error) {
+      alert(error.message || 'Failed to find address. Try a more specific address.');
+    }
+    setGeocoding(false);
+  };
+
   const updateSetting = (key, value) => {
     setLocalSettings(prev => ({ ...prev, [key]: value }));
   };
-  
+
   const updateKid = (index, field, value) => {
     const newKids = [...localSettings.kids];
     newKids[index] = { ...newKids[index], [field]: value };
     setLocalSettings(prev => ({ ...prev, kids: newKids }));
   };
-  
+
   const addKid = () => {
     const newKids = [...localSettings.kids, { id: Date.now(), name: 'New Child', age: 2, color: '#FF6B6B' }];
     setLocalSettings(prev => ({ ...prev, kids: newKids }));
   };
-  
+
   const removeKid = (index) => {
     const newKids = localSettings.kids.filter((_, i) => i !== index);
     setLocalSettings(prev => ({ ...prev, kids: newKids }));
   };
-  
+
   const toggleSchoolDay = (day) => {
     const newDays = localSettings.school_days.includes(day)
       ? localSettings.school_days.filter(d => d !== day)
       : [...localSettings.school_days, day].sort();
     setLocalSettings(prev => ({ ...prev, school_days: newDays }));
   };
-  
+
   const handleSave = () => {
     onSave(localSettings);
     onClose();
@@ -1002,9 +1317,10 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
           </div>
           
           {/* Section tabs */}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', flexWrap: 'wrap' }}>
             <button onClick={() => setActiveSection('general')} style={sectionButtonStyle(activeSection === 'general')}>General</button>
             <button onClick={() => setActiveSection('schedule')} style={sectionButtonStyle(activeSection === 'schedule')}>Schedule</button>
+            <button onClick={() => setActiveSection('activities')} style={sectionButtonStyle(activeSection === 'activities')}>Activities</button>
             <button onClick={() => setActiveSection('homeassistant')} style={sectionButtonStyle(activeSection === 'homeassistant')}>Home Assistant</button>
           </div>
         </div>
@@ -1066,16 +1382,40 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
                 }}>+ Add Child</button>
               </div>
               
-              {/* Location */}
+              {/* Location for Weather */}
               <div>
-                <label style={labelStyle}>Location</label>
-                <input
-                  type="text"
-                  value={localSettings.location}
-                  onChange={(e) => updateSetting('location', e.target.value)}
-                  style={inputStyle}
-                  placeholder="City, State"
-                />
+                <label style={labelStyle}>Location (for weather)</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={locationAddress}
+                    onChange={(e) => setLocationAddress(e.target.value)}
+                    style={{ ...inputStyle, flex: 1 }}
+                    placeholder="123 Main St, City, State"
+                  />
+                  <button
+                    onClick={handleGeocode}
+                    disabled={geocoding}
+                    style={{
+                      padding: '12px 16px',
+                      background: geocoding ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.25)',
+                      border: 'none',
+                      borderRadius: '12px',
+                      color: 'white',
+                      cursor: geocoding ? 'wait' : 'pointer',
+                      fontWeight: 600,
+                      fontSize: '14px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {geocoding ? '...' : 'Update'}
+                  </button>
+                </div>
+                {locationDisplay && (
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', marginTop: '6px' }}>
+                    Current: {locationDisplay.split(',').slice(0, 3).join(',')}
+                  </div>
+                )}
               </div>
               
               {/* Season */}
@@ -1185,7 +1525,149 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
               </div>
             </div>
           )}
-          
+
+          {activeSection === 'activities' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Add New Activity Form */}
+              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '16px', padding: '16px' }}>
+                <label style={{ ...labelStyle, marginBottom: '12px' }}>Add New Activity</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input
+                    type="text"
+                    value={newActivity.name}
+                    onChange={(e) => setNewActivity(prev => ({ ...prev, name: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="Activity name"
+                  />
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select
+                      value={newActivity.type}
+                      onChange={(e) => setNewActivity(prev => ({ ...prev, type: e.target.value }))}
+                      style={{ ...inputStyle, flex: 1 }}
+                    >
+                      {Object.entries(ACTIVITY_ICONS).map(([type, icon]) => (
+                        <option key={type} value={type}>{icon} {type}</option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: '32px', display: 'flex', alignItems: 'center' }}>
+                      {ACTIVITY_ICONS[newActivity.type] || '🎨'}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={newActivity.description}
+                    onChange={(e) => setNewActivity(prev => ({ ...prev, description: e.target.value }))}
+                    style={inputStyle}
+                    placeholder="Description (optional)"
+                  />
+                  <div>
+                    <label style={{ ...labelStyle, fontSize: '12px' }}>Seasons</label>
+                    <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                      {[['winter', '❄️'], ['spring', '🌸'], ['summer', '☀️'], ['fall', '🍂']].map(([season, emoji]) => (
+                        <button
+                          key={season}
+                          onClick={() => toggleNewActivitySeason(season)}
+                          style={{
+                            flex: 1,
+                            padding: '8px 4px',
+                            border: 'none',
+                            borderRadius: '8px',
+                            background: newActivity.seasons.includes(season) ? 'white' : 'rgba(255,255,255,0.2)',
+                            color: newActivity.seasons.includes(season) ? '#764ba2' : 'white',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '12px',
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAddActivity}
+                    style={{
+                      padding: '12px',
+                      background: 'white',
+                      border: 'none',
+                      borderRadius: '12px',
+                      color: '#764ba2',
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                      fontSize: '14px',
+                    }}
+                  >
+                    + Add Activity
+                  </button>
+                </div>
+              </div>
+
+              {/* Activities List */}
+              <div>
+                <label style={labelStyle}>
+                  Activities ({activities.filter(a => a.seasons.includes(localSettings.current_season)).length} for {localSettings.current_season})
+                </label>
+                {activitiesLoading ? (
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(255,255,255,0.7)' }}>
+                    Loading activities...
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                    {activities
+                      .filter(a => a.seasons.includes(localSettings.current_season))
+                      .map(activity => (
+                      <div
+                        key={activity.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          background: `${ACTIVITY_COLORS[activity.type] || '#888'}99`,
+                          borderRadius: '12px',
+                        }}
+                      >
+                        <span style={{ fontSize: '24px' }}>{ACTIVITY_ICONS[activity.type] || '🎨'}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ color: 'white', fontWeight: 700, fontSize: '14px' }}>{activity.name}</div>
+                          {activity.description && (
+                            <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '12px' }}>{activity.description}</div>
+                          )}
+                          <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                            {activity.seasons.map(s => (
+                              <span key={s} style={{ fontSize: '10px' }}>
+                                {s === 'winter' ? '❄️' : s === 'spring' ? '🌸' : s === 'summer' ? '☀️' : '🍂'}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {activity.is_default ? (
+                          <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.6)', padding: '4px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>Default</span>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteActivity(activity.id)}
+                            style={{
+                              background: 'rgba(255,0,0,0.3)',
+                              border: 'none',
+                              borderRadius: '8px',
+                              width: '32px',
+                              height: '32px',
+                              color: 'white',
+                              cursor: 'pointer',
+                              fontSize: '14px',
+                            }}
+                          >
+                            🗑
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {activeSection === 'homeassistant' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Enable HA */}
@@ -1223,7 +1705,7 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
                   }} />
                 </button>
               </div>
-              
+
               {/* HA URL */}
               <div>
                 <label style={labelStyle}>Home Assistant URL</label>
@@ -1235,7 +1717,7 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
                   placeholder="http://homeassistant.local:8123"
                 />
               </div>
-              
+
               {/* Webhook ID */}
               <div>
                 <label style={labelStyle}>Webhook ID</label>
@@ -1247,7 +1729,7 @@ const SettingsPanel = ({ settings, onSave, onClose }) => {
                   placeholder="toddler-schedule"
                 />
               </div>
-              
+
               {/* Automation Toggles */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 <div style={{
@@ -1386,6 +1868,16 @@ function ToddlerScheduleApp() {
   const [scheduleType, setScheduleType] = React.useState('home');
   const [refreshingActivity, setRefreshingActivity] = React.useState(null);
   const [generatedActivities, setGeneratedActivities] = React.useState({});
+  const [weather, setWeather] = React.useState(null);
+  const [weatherLoading, setWeatherLoading] = React.useState(true);
+
+  // Fetch weather
+  const fetchWeather = React.useCallback(async () => {
+    setWeatherLoading(true);
+    const weatherData = await DB.getWeather();
+    setWeather(weatherData);
+    setWeatherLoading(false);
+  }, []);
 
   // Initialize
   React.useEffect(() => {
@@ -1394,14 +1886,23 @@ function ToddlerScheduleApp() {
       await DB.cleanup();
       const loadedSettings = await DB.getSettings();
       setSettings(loadedSettings);
-      
+
       // Determine if today is a school day
       const today = new Date().getDay();
       const isSchool = loadedSettings.school_days.includes(today);
       setScheduleType(isSchool ? 'school' : 'home');
+
+      // Fetch weather
+      fetchWeather();
     };
     init();
   }, []);
+
+  // Refresh weather every 30 minutes
+  React.useEffect(() => {
+    const interval = setInterval(fetchWeather, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchWeather]);
 
   // Build schedule when settings load
   const buildFullSchedule = React.useCallback(async () => {
@@ -1418,10 +1919,10 @@ function ToddlerScheduleApp() {
     if (existing && existing.activities) {
       activities = existing.activities;
     } else {
-      // Use default activities
-      activities = getDefaultActivities(scheduleType, settings.current_season);
+      // Generate activities from database
+      activities = await generateActivitiesFromDB(settings.current_season);
       await DB.saveSchedule(todayKey, scheduleType, activities);
-      
+
       sendToHomeAssistant(settings, 'schedule_generated', {
         day_type: scheduleType,
         activities,
@@ -1447,32 +1948,43 @@ function ToddlerScheduleApp() {
   // Regenerate a single activity
   const handleRefreshSingleActivity = React.useCallback(async (activity) => {
     if (!settings || !activity.slot) return;
-    
+
     setRefreshingActivity(activity.id);
-    
+
     try {
-      // Get alternative activity from defaults
-      const allActivities = getDefaultActivities(scheduleType, settings.current_season);
-      const alternativeSlots = Object.keys(allActivities).filter(s => s !== activity.slot);
-      const randomSlot = alternativeSlots[Math.floor(Math.random() * alternativeSlots.length)];
-      const newActivity = allActivities[randomSlot] || allActivities[activity.slot];
-      
+      // Get current activity names to exclude
+      const currentNames = Object.values(generatedActivities).map(a => a.name);
+
+      // Get a random activity from DB
+      const randomActivity = await getRandomActivityFromDB(settings.current_season, [activity.name]);
+
+      if (!randomActivity) {
+        alert('No alternative activities available. Add more in settings!');
+        return;
+      }
+
+      const newActivity = {
+        name: randomActivity.name,
+        type: randomActivity.type,
+        description: randomActivity.description,
+      };
+
       // Update the generated activities
       const updatedActivities = {
         ...generatedActivities,
         [activity.slot]: newActivity,
       };
-      
+
       setGeneratedActivities(updatedActivities);
-      
+
       // Save to database
       const todayKey = getTodayKey();
       await DB.saveSchedule(todayKey, scheduleType, updatedActivities);
-      
+
       // Update the schedule
-      setSchedule(prevSchedule => 
-        prevSchedule.map(item => 
-          item.id === activity.id 
+      setSchedule(prevSchedule =>
+        prevSchedule.map(item =>
+          item.id === activity.id
             ? { ...item, name: newActivity.name, type: newActivity.type, description: newActivity.description }
             : item
         )
@@ -1583,6 +2095,10 @@ function ToddlerScheduleApp() {
           settings={settings}
           onSave={handleSaveSettings}
           onClose={() => setShowSettings(false)}
+          onActivitiesChange={() => {
+            // Refresh weather after location change
+            fetchWeather();
+          }}
         />
       )}
 
@@ -1610,6 +2126,12 @@ function ToddlerScheduleApp() {
           {timeDisplay}
         </div>
         <div style={{ fontSize: '24px', fontWeight: 600, opacity: 0.9, marginTop: '4px' }}>{dayDisplay}</div>
+        <div style={{ fontSize: '16px', fontWeight: 600, opacity: 0.8, marginTop: '2px' }}>
+          {now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+        </div>
+
+        {/* Weather Display */}
+        <WeatherDisplay weather={weather} loading={weatherLoading} />
 
         <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '12px' }}>
           <button

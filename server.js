@@ -179,7 +179,140 @@ const initDatabase = async () => {
 
   // Initialize defaults
   initDefaults();
+  migrateActivities();
   saveDatabase();
+};
+
+// ===========================================
+// ACTIVITY MIGRATIONS - Add new activities
+// ===========================================
+const migrateActivities = () => {
+  // Get existing activity names to avoid duplicates
+  const existing = queryAll('SELECT name FROM activities');
+  const existingNames = new Set(existing.map(a => a.name.toLowerCase()));
+
+  const newActivities = [
+    // === BLUEY EPISODES (Great for 1-3yo) ===
+    { name: 'Bluey: Magic Xylophone', type: 'tv', description: 'Bluey freezes everyone with a magic xylophone', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Keepy Uppy', type: 'tv', description: 'Keep the balloon from touching the ground', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Dance Mode', type: 'tv', description: 'Mum has to dance whenever they say dance mode', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: The Creek', type: 'tv', description: 'Adventure at the creek with Dad', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Sleepytime', type: 'tv', description: 'Bingo dreams of space - beautiful bedtime episode', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Bike', type: 'tv', description: 'Bluey learns to ride a bike', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Grannies', type: 'tv', description: 'Bluey and Bingo pretend to be grannies', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Hammerbarn', type: 'tv', description: 'Trip to the hardware store', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Takeaway', type: 'tv', description: 'Dad tries to order food with the kids', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+    { name: 'Bluey: Daddy Putdown', type: 'tv', description: 'Dad tries to put Bingo to bed', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 7 },
+
+    // === BLAZE AND THE MONSTER MACHINES (Great for 2-4yo) ===
+    { name: 'Blaze: Truck Ball', type: 'tv', description: 'Blaze plays truck ball', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: The Bouncing Bull Racetrack', type: 'tv', description: 'Racing adventure with Blaze', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Gasquatch', type: 'tv', description: 'Blaze helps find Gasquatch', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Cake-tastrophe', type: 'tv', description: 'Birthday cake adventure', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Firefighter Blaze', type: 'tv', description: 'Blaze becomes a firefighter', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Dino Dash', type: 'tv', description: 'Dinosaur adventure with Blaze', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Animal Island', type: 'tv', description: 'Blaze helps animals on the island', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Blaze: Race to the Top', type: 'tv', description: 'Epic race to the mountain top', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+
+    // === BLIPPI (Great for 1-4yo) ===
+    { name: 'Blippi: Fire Trucks', type: 'tv', description: 'Learn about fire trucks with Blippi', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Excavators', type: 'tv', description: 'Dig with excavators', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Garbage Trucks', type: 'tv', description: 'Learn about garbage trucks', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Zoo Animals', type: 'tv', description: 'Visit the zoo with Blippi', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Farm Animals', type: 'tv', description: 'Learn about farm animals', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Colors and Numbers', type: 'tv', description: 'Learn colors and counting', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Playground', type: 'tv', description: 'Play at the playground with Blippi', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Trains', type: 'tv', description: 'Learn about trains', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Ice Cream Truck', type: 'tv', description: 'Ice cream truck adventure', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Blippi: Monster Trucks', type: 'tv', description: 'Monster truck fun', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+
+    // === MS RACHEL (Great for 0-3yo) ===
+    { name: 'Ms Rachel: Songs for Littles', type: 'tv', description: 'Learning songs and baby sign language', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Ms Rachel: Learn to Talk', type: 'tv', description: 'Speech development for toddlers', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Ms Rachel: First Words', type: 'tv', description: 'Learning first words', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Ms Rachel: Toddler Learning', type: 'tv', description: 'Educational toddler videos', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Ms Rachel: Nursery Rhymes', type: 'tv', description: 'Classic nursery rhymes', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Ms Rachel: Baby Songs', type: 'tv', description: 'Songs for babies', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+
+    // === COCOMELON (Great for 0-3yo) ===
+    { name: 'Cocomelon: Bath Song', type: 'tv', description: 'Fun bath time song', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Cocomelon: Wheels on the Bus', type: 'tv', description: 'Classic wheels on the bus', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Cocomelon: ABC Song', type: 'tv', description: 'Learn the alphabet', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Cocomelon: Yes Yes Vegetables', type: 'tv', description: 'Learning to eat veggies', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Cocomelon: Bedtime Song', type: 'tv', description: 'Calming bedtime routine', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+
+    // === PAW PATROL (Great for 2-4yo) ===
+    { name: 'Paw Patrol: Pups Save the Day', type: 'tv', description: 'Classic rescue mission', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Paw Patrol: Mighty Pups', type: 'tv', description: 'Pups with super powers', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Paw Patrol: Sea Patrol', type: 'tv', description: 'Ocean rescue adventure', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Paw Patrol: Dino Rescue', type: 'tv', description: 'Dinosaur rescue mission', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Paw Patrol: Jet to the Rescue', type: 'tv', description: 'High-flying adventure', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+
+    // === DANIEL TIGER (Great for 2-4yo) ===
+    { name: 'Daniel Tiger: Feelings', type: 'tv', description: 'Learning about emotions', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Daniel Tiger: Potty Time', type: 'tv', description: 'Potty training episode', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Daniel Tiger: Doctor Visit', type: 'tv', description: 'Visiting the doctor', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Daniel Tiger: New Baby', type: 'tv', description: 'Welcoming a new sibling', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+    { name: 'Daniel Tiger: Sharing', type: 'tv', description: 'Learning to share', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 22 },
+
+    // === SESAME STREET (Great for 1-4yo) ===
+    { name: 'Sesame Street: Elmo\'s World', type: 'tv', description: 'Learn with Elmo', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Sesame Street: Cookie Monster', type: 'tv', description: 'Cookie Monster adventures', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Sesame Street: Counting', type: 'tv', description: 'Count with Count von Count', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Sesame Street: ABCs', type: 'tv', description: 'Letter learning fun', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+
+    // === GABBY'S DOLLHOUSE (Great for 2-4yo) ===
+    { name: 'Gabby\'s Dollhouse: Cat-tastic', type: 'tv', description: 'Craft adventures with Gabby', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 24 },
+    { name: 'Gabby\'s Dollhouse: Kitty Fairy', type: 'tv', description: 'Magical adventures', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 24 },
+    { name: 'Gabby\'s Dollhouse: DJ Catnip', type: 'tv', description: 'Music and dance party', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 24 },
+
+    // === SUPER SIMPLE SONGS (Great for 0-3yo) ===
+    { name: 'Super Simple: Baby Shark', type: 'tv', description: 'Baby shark doo doo', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Super Simple: Five Little Ducks', type: 'tv', description: 'Counting with ducks', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Super Simple: Twinkle Twinkle', type: 'tv', description: 'Classic lullaby', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+    { name: 'Super Simple: Old MacDonald', type: 'tv', description: 'Farm animal sounds', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 3 },
+
+    // === ADDITIONAL TODDLER ACTIVITIES ===
+    { name: 'Sticker Books', type: 'craft', description: 'Peel and stick fun', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Kinetic Sand', type: 'sensory', description: 'Moldable sand play', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Ball Pit Play', type: 'freeplay', description: 'Jump in the ball pit', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Magnet Tiles', type: 'building', description: 'Build with magnetic tiles', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Train Set', type: 'freeplay', description: 'Build tracks and play trains', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 25 },
+    { name: 'Baby Dolls', type: 'freeplay', description: 'Nurture play with dolls', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Play Kitchen', type: 'freeplay', description: 'Pretend cooking', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Duplo Building', type: 'building', description: 'Big Lego building', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Shape Sorter', type: 'puzzle', description: 'Match shapes to holes', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 10 },
+    { name: 'Stacking Cups', type: 'building', description: 'Stack and knock down', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 10 },
+    { name: 'Finger Painting', type: 'craft', description: 'Messy art fun', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Water Painting', type: 'craft', description: 'Paint with water on paper', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Balloon Play', type: 'freeplay', description: 'Bat balloons around', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Tunnel Crawling', type: 'freeplay', description: 'Crawl through play tunnel', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Hide and Seek', type: 'freeplay', description: 'Classic hiding game', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Ring Around the Rosie', type: 'dance', description: 'Circle time song', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 5 },
+    { name: 'Freeze Dance', type: 'dance', description: 'Dance and freeze game', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Parachute Play', type: 'freeplay', description: 'Wave the parachute', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 10 },
+    { name: 'Trampoline Time', type: 'freeplay', description: 'Bounce on the trampoline', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 15 },
+    { name: 'Obstacle Course', type: 'freeplay', description: 'Indoor obstacle course', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Pillow Fort', type: 'fort', description: 'Build with couch cushions', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 30 },
+    { name: 'Cardboard Box Play', type: 'freeplay', description: 'Imaginative box play', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 20 },
+    { name: 'Animal Sounds Game', type: 'freeplay', description: 'Make animal sounds', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 10 },
+    { name: 'Simon Says', type: 'freeplay', description: 'Follow the leader', seasons: ['winter', 'spring', 'summer', 'fall'], duration: 10 },
+  ];
+
+  let addedCount = 0;
+  for (const activity of newActivities) {
+    if (!existingNames.has(activity.name.toLowerCase())) {
+      db.run(
+        'INSERT INTO activities (name, type, description, seasons, duration, is_default) VALUES (?, ?, ?, ?, ?, 1)',
+        [activity.name, activity.type, activity.description, JSON.stringify(activity.seasons), activity.duration || null]
+      );
+      addedCount++;
+    }
+  }
+
+  if (addedCount > 0) {
+    console.log(`📺 Added ${addedCount} new activities to the database`);
+  }
 };
 
 // ===========================================

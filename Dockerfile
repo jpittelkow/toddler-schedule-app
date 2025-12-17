@@ -7,9 +7,6 @@ FROM node:18-alpine
 # Create app directory
 WORKDIR /app
 
-# Install dependencies for better-sqlite3
-RUN apk add --no-cache python3 make g++
-
 # Copy package files
 COPY package*.json ./
 

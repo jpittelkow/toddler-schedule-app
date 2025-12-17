@@ -1,0 +1,1967 @@
+import React, { useState, useEffect, useCallback } from 'react';
+
+// ===========================================
+// DATABASE HELPER (uses localStorage as fallback, 
+// real SQLite would need a backend)
+// ===========================================
+const DB = {
+  // In a real implementation, these would call a backend API
+  // that interfaces with SQLite. For now, using localStorage
+  // with a structure that mirrors SQLite tables.
+  
+  async init() {
+    // Initialize default settings if not exist
+    if (!localStorage.getItem('db_settings')) {
+      const defaultSettings = {
+        home_assistant_url: 'http://homeassistant.local:8123',
+        webhook_id: 'toddler-schedule',
+        enable_home_assistant: false,
+        enable_voice_announcements: true,
+        enable_light_automations: true,
+        current_season: 'winter',
+        location: 'Wisconsin',
+        kids: [
+          { id: 1, name: 'Big Brother', age: 3, color: '#4D96FF' },
+          { id: 2, name: 'Little Brother', age: 1, color: '#6BCB77' },
+        ],
+        school_days: [1, 3, 5], // Mon, Wed, Fri
+        school_start: '08:45',
+        school_end: '11:45',
+        wake_time: '06:30',
+        bedtime: '19:30',
+        baby_nap_start: '12:30',
+        baby_nap_duration: 150, // minutes
+        toddler_nap_start: '13:30',
+        toddler_nap_duration: 90,
+        theme: 'purple', // purple, blue, green, sunset
+      };
+      localStorage.setItem('db_settings', JSON.stringify(defaultSettings));
+    }
+    
+    if (!localStorage.getItem('db_schedules')) {
+      localStorage.setItem('db_schedules', JSON.stringify({}));
+    }
+    
+    if (!localStorage.getItem('db_activity_history')) {
+      localStorage.setItem('db_activity_history', JSON.stringify([]));
+    }
+  },
+  
+  // Settings
+  async getSettings() {
+    await this.init();
+    return JSON.parse(localStorage.getItem('db_settings'));
+  },
+  
+  async updateSettings(settings) {
+    localStorage.setItem('db_settings', JSON.stringify(settings));
+    return settings;
+  },
+  
+  // Schedules
+  async getSchedule(dateKey, scheduleType) {
+    const schedules = JSON.parse(localStorage.getItem('db_schedules') || '{}');
+    return schedules[`${dateKey}-${scheduleType}`] || null;
+  },
+  
+  async saveSchedule(dateKey, scheduleType, activities) {
+    const schedules = JSON.parse(localStorage.getItem('db_schedules') || '{}');
+    schedules[`${dateKey}-${scheduleType}`] = {
+      created_at: new Date().toISOString(),
+      activities,
+    };
+    localStorage.setItem('db_schedules', JSON.stringify(schedules));
+  },
+  
+  async deleteSchedule(dateKey, scheduleType) {
+    const schedules = JSON.parse(localStorage.getItem('db_schedules') || '{}');
+    delete schedules[`${dateKey}-${scheduleType}`];
+    localStorage.setItem('db_schedules', JSON.stringify(schedules));
+  },
+  
+  // Activity History (for analytics)
+  async logActivity(activity) {
+    const history = JSON.parse(localStorage.getItem('db_activity_history') || '[]');
+    history.push({
+      ...activity,
+      logged_at: new Date().toISOString(),
+    });
+    // Keep last 1000 entries
+    if (history.length > 1000) {
+      history.splice(0, history.length - 1000);
+    }
+    localStorage.setItem('db_activity_history', JSON.stringify(history));
+  },
+  
+  // Cleanup old schedules (keep last 7 days)
+  async cleanup() {
+    const schedules = JSON.parse(localStorage.getItem('db_schedules') || '{}');
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    
+    Object.keys(schedules).forEach(key => {
+      const schedule = schedules[key];
+      if (new Date(schedule.created_at) < cutoff) {
+        delete schedules[key];
+      }
+    });
+    
+    localStorage.setItem('db_schedules', JSON.stringify(schedules));
+  },
+};
+
+// ===========================================
+// ICONS AND COLORS
+// ===========================================
+const ACTIVITY_ICONS = {
+  wake: '🌅', breakfast: '🥣', freeplay: '🧸', school: '🏫',
+  snack: '🍎', outdoor: '🌳', lunch: '🍽️', nap: '😴',
+  quiettime: '📚', activity: '🎨', basement: '🏠', tv: '📺',
+  dinner: '🍝', bath: '🛁', bedtime: '🌙', drive: '🚗',
+  errand: '🛒', mombreak: '☕', sensory: '🎭', music: '🎵',
+  building: '🧱', reading: '📖', cooking: '👨‍🍳', dance: '💃',
+  craft: '✂️', puzzle: '🧩', snow: '❄️', fort: '🏰',
+};
+
+const ACTIVITY_COLORS = {
+  wake: '#FFD93D', breakfast: '#FF8C42', freeplay: '#6BCB77', school: '#4D96FF',
+  snack: '#FF6B9D', outdoor: '#2ECC71', lunch: '#FF7B54', nap: '#9B59B6',
+  quiettime: '#A8DADC', activity: '#FF6B6B', basement: '#45B7D1', tv: '#DDA0DD',
+  dinner: '#F39C12', bath: '#74B9FF', bedtime: '#6C5CE7', drive: '#FDCB6E',
+  errand: '#00CEC9', mombreak: '#E17055', sensory: '#E056FD', music: '#686DE0',
+  building: '#F8B500', reading: '#22A6B3', cooking: '#EB4D4B', dance: '#FF6B81',
+  craft: '#7BED9F', puzzle: '#70A1FF', snow: '#74B9FF', fort: '#FFA502',
+};
+
+const THEMES = {
+  purple: 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
+  blue: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+  green: 'linear-gradient(135deg, #11998e 0%, #38ef7d 100%)',
+  sunset: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+  ocean: 'linear-gradient(135deg, #2E3192 0%, #1BFFFF 100%)',
+  forest: 'linear-gradient(135deg, #134E5E 0%, #71B280 100%)',
+};
+
+// ===========================================
+// UTILITY FUNCTIONS
+// ===========================================
+const parseTime = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+const formatTimeRemaining = (minutes) => {
+  if (minutes < 0) return "Done!";
+  const hrs = Math.floor(minutes / 60);
+  const mins = Math.floor(minutes % 60);
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins} min`;
+};
+
+const formatTime12h = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${minutes.toString().padStart(2, '0')} ${period}`;
+};
+
+const getCurrentMinutes = () => {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+};
+
+const getTodayKey = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
+const minutesToTime = (minutes) => {
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+};
+
+// ===========================================
+// SCHEDULE BUILDER
+// ===========================================
+const buildScheduleTemplate = (settings, isSchoolDay) => {
+  const wake = parseTime(settings.wake_time);
+  const bedtime = parseTime(settings.bedtime);
+  
+  const template = [];
+  
+  // Wake up
+  template.push({
+    id: 'wake',
+    name: 'Wake Up',
+    start: settings.wake_time,
+    end: minutesToTime(wake + 30),
+    type: 'wake',
+    fixed: true,
+  });
+  
+  // Breakfast
+  template.push({
+    id: 'breakfast',
+    name: 'Breakfast',
+    start: minutesToTime(wake + 30),
+    end: minutesToTime(wake + 60),
+    type: 'breakfast',
+    fixed: true,
+  });
+  
+  if (isSchoolDay) {
+    // School day schedule
+    const schoolStart = parseTime(settings.school_start);
+    const schoolEnd = parseTime(settings.school_end);
+    
+    // Morning play before school
+    template.push({
+      id: 'morning-play',
+      name: 'Play Time',
+      start: minutesToTime(wake + 60),
+      end: minutesToTime(schoolStart - 15),
+      type: 'freeplay',
+      customizable: true,
+      slot: 'morning-play',
+    });
+    
+    // School drop-off
+    template.push({
+      id: 'school-dropoff',
+      name: 'School Drop-off',
+      start: minutesToTime(schoolStart - 15),
+      end: settings.school_start,
+      type: 'drive',
+      fixed: true,
+    });
+    
+    // Baby morning time
+    template.push({
+      id: 'baby-morning',
+      name: 'Baby Play',
+      start: settings.school_start,
+      end: minutesToTime(schoolStart + 75),
+      type: 'freeplay',
+      customizable: true,
+      slot: 'baby-morning',
+    });
+    
+    // Snack
+    template.push({
+      id: 'snack1',
+      name: 'Snack',
+      start: minutesToTime(schoolStart + 75),
+      end: minutesToTime(schoolStart + 105),
+      type: 'snack',
+      fixed: true,
+    });
+    
+    // Late morning activity
+    template.push({
+      id: 'late-morning',
+      name: 'Outing',
+      start: minutesToTime(schoolStart + 105),
+      end: minutesToTime(schoolEnd - 15),
+      type: 'errand',
+      customizable: true,
+      slot: 'late-morning',
+    });
+    
+    // School pickup
+    template.push({
+      id: 'school-pickup',
+      name: 'School Pick-up',
+      start: minutesToTime(schoolEnd - 15),
+      end: minutesToTime(schoolEnd + 15),
+      type: 'drive',
+      fixed: true,
+    });
+  } else {
+    // Home day schedule
+    // Morning play
+    template.push({
+      id: 'morning-play',
+      name: 'Play Time',
+      start: minutesToTime(wake + 60),
+      end: minutesToTime(wake + 90),
+      type: 'freeplay',
+      customizable: true,
+      slot: 'early-morning',
+    });
+    
+    // Morning activity
+    template.push({
+      id: 'morning-activity',
+      name: 'Morning Activity',
+      start: minutesToTime(wake + 90),
+      end: minutesToTime(wake + 150),
+      type: 'activity',
+      customizable: true,
+      slot: 'morning-activity',
+    });
+    
+    // Snack
+    template.push({
+      id: 'snack1',
+      name: 'Snack',
+      start: minutesToTime(wake + 150),
+      end: minutesToTime(wake + 180),
+      type: 'snack',
+      fixed: true,
+    });
+    
+    // Outing
+    template.push({
+      id: 'outing',
+      name: 'Outing',
+      start: minutesToTime(wake + 180),
+      end: minutesToTime(wake + 270),
+      type: 'errand',
+      customizable: true,
+      slot: 'outing',
+    });
+    
+    // Pre-lunch play
+    template.push({
+      id: 'pre-lunch',
+      name: 'Indoor Play',
+      start: minutesToTime(wake + 270),
+      end: minutesToTime(wake + 330),
+      type: 'freeplay',
+      customizable: true,
+      slot: 'pre-lunch',
+    });
+  }
+  
+  // Lunch (same for both)
+  const lunchTime = isSchoolDay ? parseTime(settings.school_end) + 15 : wake + 330;
+  template.push({
+    id: 'lunch',
+    name: 'Lunch',
+    start: minutesToTime(lunchTime),
+    end: minutesToTime(lunchTime + 30),
+    type: 'lunch',
+    fixed: true,
+  });
+  
+  // Baby nap
+  const babyNapStart = parseTime(settings.baby_nap_start);
+  template.push({
+    id: 'baby-nap',
+    name: 'Baby Nap',
+    start: settings.baby_nap_start,
+    end: minutesToTime(babyNapStart + 60),
+    type: 'nap',
+    fixed: true,
+    for: 'baby',
+  });
+  
+  // Quiet time for 3yo
+  template.push({
+    id: 'quiet-time',
+    name: 'Quiet Time',
+    start: settings.baby_nap_start,
+    end: minutesToTime(babyNapStart + 60),
+    type: 'quiettime',
+    customizable: true,
+    slot: 'quiet-time',
+    for: '3yo',
+  });
+  
+  // Both kids nap
+  const toddlerNapStart = parseTime(settings.toddler_nap_start);
+  template.push({
+    id: 'both-nap',
+    name: 'Nap Time',
+    start: settings.toddler_nap_start,
+    end: minutesToTime(toddlerNapStart + settings.toddler_nap_duration),
+    type: 'nap',
+    fixed: true,
+  });
+  
+  // Afternoon snack
+  const afternoonSnack = toddlerNapStart + settings.toddler_nap_duration;
+  template.push({
+    id: 'snack2',
+    name: 'Snack',
+    start: minutesToTime(afternoonSnack),
+    end: minutesToTime(afternoonSnack + 30),
+    type: 'snack',
+    fixed: true,
+  });
+  
+  // Afternoon activity
+  template.push({
+    id: 'afternoon-activity',
+    name: 'Activity',
+    start: minutesToTime(afternoonSnack + 30),
+    end: minutesToTime(afternoonSnack + 90),
+    type: 'activity',
+    customizable: true,
+    slot: 'afternoon-activity',
+  });
+  
+  // Wind down
+  const dinnerTime = bedtime - 120;
+  template.push({
+    id: 'wind-down',
+    name: 'Wind Down',
+    start: minutesToTime(afternoonSnack + 90),
+    end: minutesToTime(dinnerTime),
+    type: 'freeplay',
+    customizable: true,
+    slot: 'wind-down',
+  });
+  
+  // Dinner
+  template.push({
+    id: 'dinner',
+    name: 'Dinner',
+    start: minutesToTime(dinnerTime),
+    end: minutesToTime(dinnerTime + 45),
+    type: 'dinner',
+    fixed: true,
+  });
+  
+  // Bath
+  template.push({
+    id: 'bath',
+    name: 'Bath Time',
+    start: minutesToTime(dinnerTime + 45),
+    end: minutesToTime(dinnerTime + 75),
+    type: 'bath',
+    fixed: true,
+  });
+  
+  // Bedtime routine
+  template.push({
+    id: 'bedtime',
+    name: 'Bedtime',
+    start: minutesToTime(dinnerTime + 75),
+    end: settings.bedtime,
+    type: 'bedtime',
+    fixed: true,
+  });
+  
+  return template;
+};
+
+// ===========================================
+// CLAUDE API - ACTIVITY GENERATION
+// ===========================================
+const generateDailyActivities = async (settings, dayType) => {
+  const kidsInfo = settings.kids.map(k => `${k.name} (${k.age} years old)`).join(' and ');
+  
+  const prompt = `You are helping create a daily activity schedule for toddlers: ${kidsInfo}. It's ${settings.current_season} in ${settings.location}.
+
+Generate creative, age-appropriate activity suggestions for today. For each slot, provide a fun activity name and the best matching type from this list: freeplay, activity, sensory, music, building, reading, cooking, dance, craft, puzzle, snow, fort, basement, tv, outdoor, errand
+
+Today is a ${dayType === 'school' ? 'school day (older child goes to school in morning)' : 'home day (all kids home all day)'}.
+
+Activity slots to fill:
+${dayType === 'school' ? `
+- morning-play: Brief play before school
+- baby-morning: Activity for younger child while older is at school
+- late-morning: Outing or activity
+- quiet-time: Calm activity while baby naps
+- afternoon-activity: Main activity after naps
+- wind-down: Calm pre-dinner activity
+` : `
+- early-morning: Wake-up play time
+- morning-activity: First structured activity
+- outing: Where to go / what to do outside house
+- pre-lunch: Indoor play before lunch
+- quiet-time: Calm activity while baby naps
+- afternoon-activity: Main activity after naps
+- wind-down: Calm pre-dinner activity
+`}
+
+Consider:
+- ${settings.current_season} weather
+- Mix of active and calm activities
+- Age-appropriate for each child
+
+Respond with ONLY a JSON object in this exact format, no other text:
+{
+  "slot-name": { "name": "Activity Name", "type": "activity-type", "description": "Brief fun description" }
+}`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text || '';
+    
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+  } catch (error) {
+    console.error('Failed to generate activities:', error);
+  }
+  
+  return getDefaultActivities(dayType, settings.current_season);
+};
+
+const getDefaultActivities = (dayType, season) => {
+  const winterActivities = {
+    'morning-play': { name: 'Block Tower Building', type: 'building', description: 'Build tall towers together' },
+    'early-morning': { name: 'Dance Party', type: 'dance', description: 'Morning wiggles out' },
+    'baby-morning': { name: 'Sensory Bins', type: 'sensory', description: 'Rice and scoop play' },
+    'morning-activity': { name: 'Playdough Fun', type: 'craft', description: 'Squish and create' },
+    'late-morning': { name: 'Library Trip', type: 'errand', description: 'Story time and books' },
+    'outing': { name: 'Target Adventure', type: 'errand', description: 'Walk around, get out of house' },
+    'pre-lunch': { name: 'Basement Play', type: 'basement', description: 'Burn energy downstairs' },
+    'quiet-time': { name: 'Puzzle Time', type: 'puzzle', description: 'Calm puzzle solving' },
+    'afternoon-activity': { name: 'Blanket Fort', type: 'fort', description: 'Build a cozy hideout' },
+    'wind-down': { name: 'Story Time', type: 'reading', description: 'Calm reading together' },
+  };
+  
+  const summerActivities = {
+    'morning-play': { name: 'Backyard Bubbles', type: 'outdoor', description: 'Chase bubbles outside' },
+    'early-morning': { name: 'Sidewalk Chalk', type: 'outdoor', description: 'Draw on the driveway' },
+    'baby-morning': { name: 'Water Table', type: 'sensory', description: 'Splash and pour' },
+    'morning-activity': { name: 'Nature Walk', type: 'outdoor', description: 'Explore the neighborhood' },
+    'late-morning': { name: 'Playground', type: 'outdoor', description: 'Slides and swings' },
+    'outing': { name: 'Splash Pad', type: 'outdoor', description: 'Cool off with water play' },
+    'pre-lunch': { name: 'Bug Hunt', type: 'outdoor', description: 'Find crawly friends' },
+    'quiet-time': { name: 'Coloring Books', type: 'craft', description: 'Quiet coloring time' },
+    'afternoon-activity': { name: 'Kiddie Pool', type: 'outdoor', description: 'Backyard water fun' },
+    'wind-down': { name: 'Popsicles & Books', type: 'reading', description: 'Cool treat and stories' },
+  };
+  
+  return season === 'winter' ? winterActivities : summerActivities;
+};
+
+// ===========================================
+// HOME ASSISTANT INTEGRATION
+// ===========================================
+const sendToHomeAssistant = async (settings, eventType, data) => {
+  if (!settings.enable_home_assistant) {
+    console.log('Home Assistant event (disabled):', eventType, data);
+    return;
+  }
+  
+  const webhookUrl = `${settings.home_assistant_url}/api/webhook/${settings.webhook_id}`;
+  
+  try {
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: eventType,
+        timestamp: new Date().toISOString(),
+        ...data,
+      }),
+    });
+    console.log('Sent to Home Assistant:', eventType);
+  } catch (error) {
+    console.error('Failed to send to Home Assistant:', error);
+  }
+};
+
+// ===========================================
+// COMPONENTS
+// ===========================================
+
+// Big animated countdown for kids
+const KidsCountdown = ({ timeRemaining, activityName, activityIcon, activityColor }) => {
+  const totalSeconds = Math.max(0, Math.floor(timeRemaining * 60));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  const [pulse, setPulse] = useState(false);
+  
+  // Pulse animation every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPulse(true);
+      setTimeout(() => setPulse(false), 200);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+  
+  // Warning state when less than 5 minutes
+  const isWarning = timeRemaining <= 5 && timeRemaining > 1;
+  const isAlmostDone = timeRemaining <= 1;
+  
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${activityColor}dd, ${activityColor})`,
+      borderRadius: '32px',
+      padding: '24px',
+      textAlign: 'center',
+      boxShadow: `0 8px 32px ${activityColor}60`,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Animated background bubbles */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+      }}>
+        {[...Array(6)].map((_, i) => (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              width: `${30 + i * 15}px`,
+              height: `${30 + i * 15}px`,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.1)',
+              left: `${10 + i * 15}%`,
+              bottom: '-20px',
+              animation: `float ${3 + i * 0.5}s ease-in-out infinite`,
+              animationDelay: `${i * 0.3}s`,
+            }}
+          />
+        ))}
+      </div>
+      
+      {/* Activity icon */}
+      <div style={{
+        fontSize: '48px',
+        marginBottom: '8px',
+        animation: pulse ? 'bounce 0.3s ease' : 'none',
+      }}>
+        {activityIcon}
+      </div>
+      
+      {/* Activity name */}
+      <div style={{
+        fontSize: '24px',
+        fontWeight: 700,
+        color: 'white',
+        textShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        marginBottom: '16px',
+      }}>
+        {activityName}
+      </div>
+      
+      {/* Big countdown numbers */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: '8px',
+      }}>
+        {hours > 0 && (
+          <>
+            <CountdownDigit value={hours} label="hr" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+            <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8 }}>:</div>
+          </>
+        )}
+        <CountdownDigit value={minutes} label="min" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+        <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8 }}>:</div>
+        <CountdownDigit value={seconds} label="sec" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+      </div>
+      
+      {/* Progress bar */}
+      <div style={{
+        marginTop: '20px',
+        height: '12px',
+        background: 'rgba(255,255,255,0.3)',
+        borderRadius: '6px',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          height: '100%',
+          background: isAlmostDone ? '#FF6B6B' : isWarning ? '#FFD93D' : 'white',
+          borderRadius: '6px',
+          width: `${Math.max(0, (timeRemaining / 60) * 100)}%`,
+          maxWidth: '100%',
+          transition: 'width 1s linear, background 0.3s ease',
+        }} />
+      </div>
+      
+      {/* Status message */}
+      {isAlmostDone && (
+        <div style={{
+          marginTop: '12px',
+          fontSize: '18px',
+          fontWeight: 700,
+          color: '#FFD93D',
+          animation: 'pulse 0.5s infinite',
+        }}>
+          ⏰ Almost time to switch!
+        </div>
+      )}
+      {isWarning && !isAlmostDone && (
+        <div style={{
+          marginTop: '12px',
+          fontSize: '16px',
+          fontWeight: 600,
+          color: 'rgba(255,255,255,0.9)',
+        }}>
+          🕐 {Math.ceil(timeRemaining)} minutes left!
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Individual countdown digit with animation
+const CountdownDigit = ({ value, label, pulse, isWarning, isAlmostDone }) => {
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+    }}>
+      <div style={{
+        background: isAlmostDone ? 'rgba(255,100,100,0.3)' : isWarning ? 'rgba(255,217,61,0.3)' : 'rgba(255,255,255,0.2)',
+        borderRadius: '16px',
+        padding: '12px 16px',
+        minWidth: '70px',
+        transform: pulse ? 'scale(1.05)' : 'scale(1)',
+        transition: 'transform 0.2s ease, background 0.3s ease',
+      }}>
+        <div style={{
+          fontSize: '48px',
+          fontWeight: 800,
+          color: 'white',
+          textShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          lineHeight: 1,
+          fontFamily: "'Nunito', sans-serif",
+        }}>
+          {String(value).padStart(2, '0')}
+        </div>
+      </div>
+      <div style={{
+        fontSize: '12px',
+        fontWeight: 600,
+        color: 'rgba(255,255,255,0.8)',
+        marginTop: '4px',
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
+      }}>
+        {label}
+      </div>
+    </div>
+  );
+};
+
+// Current Activity Card with integrated countdown
+const CurrentActivityCard = ({ activity, timeRemaining, onRefresh, isRefreshing }) => {
+  const bgColor = ACTIVITY_COLORS[activity.type] || '#888';
+  const icon = ACTIVITY_ICONS[activity.type] || '⭐';
+  const canRefresh = activity.customizable && onRefresh;
+  
+  const totalSeconds = Math.max(0, Math.floor(timeRemaining * 60));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  const [pulse, setPulse] = useState(false);
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPulse(true);
+      setTimeout(() => setPulse(false), 200);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+  
+  const isWarning = timeRemaining <= 5 && timeRemaining > 1;
+  const isAlmostDone = timeRemaining <= 1;
+  
+  const handleRefreshClick = (e) => {
+    e.stopPropagation();
+    if (window.confirm(`🔄 Generate a new activity for "${activity.name}"?\n\nThis will create a different activity suggestion for this time slot.`)) {
+      onRefresh(activity);
+    }
+  };
+  
+  return (
+    <div style={{
+      background: `linear-gradient(135deg, ${bgColor}ee, ${bgColor})`,
+      borderRadius: '32px',
+      padding: '24px',
+      textAlign: 'center',
+      boxShadow: `0 8px 32px ${bgColor}60`,
+      position: 'relative',
+      overflow: 'hidden',
+    }}>
+      {/* Animated background bubbles */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+      }}>
+        {[...Array(8)].map((_, i) => (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              width: `${20 + i * 12}px`,
+              height: `${20 + i * 12}px`,
+              borderRadius: '50%',
+              background: 'rgba(255,255,255,0.08)',
+              left: `${5 + i * 12}%`,
+              bottom: '-20px',
+              animation: `float ${3 + i * 0.4}s ease-in-out infinite`,
+              animationDelay: `${i * 0.2}s`,
+            }}
+          />
+        ))}
+      </div>
+      
+      {/* Refresh button */}
+      {canRefresh && (
+        <button
+          onClick={handleRefreshClick}
+          disabled={isRefreshing}
+          style={{
+            position: 'absolute',
+            top: '16px',
+            right: '16px',
+            background: 'rgba(255,255,255,0.25)',
+            border: 'none',
+            borderRadius: '50%',
+            width: '44px',
+            height: '44px',
+            cursor: isRefreshing ? 'wait' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '22px',
+            transition: 'all 0.2s ease',
+            opacity: isRefreshing ? 0.5 : 1,
+            animation: isRefreshing ? 'spin 1s linear infinite' : 'none',
+            zIndex: 10,
+          }}
+          title="Get different activity"
+        >
+          🔄
+        </button>
+      )}
+      
+      {/* Header label */}
+      <div style={{
+        fontSize: '16px',
+        fontWeight: 700,
+        color: 'rgba(255,255,255,0.9)',
+        marginBottom: '12px',
+        textTransform: 'uppercase',
+        letterSpacing: '2px',
+      }}>
+        ⭐ Right Now ⭐
+      </div>
+      
+      {/* Activity icon - big and bouncy */}
+      <div style={{
+        fontSize: '80px',
+        lineHeight: 1,
+        marginBottom: '12px',
+        animation: pulse ? 'bounce 0.3s ease' : 'none',
+        filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))',
+      }}>
+        {icon}
+      </div>
+      
+      {/* Activity name */}
+      <div style={{
+        fontSize: '32px',
+        fontWeight: 800,
+        color: 'white',
+        textShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        marginBottom: '8px',
+      }}>
+        {activity.name}
+      </div>
+      
+      {/* Description */}
+      {activity.description && (
+        <div style={{
+          fontSize: '18px',
+          color: 'rgba(255,255,255,0.9)',
+          fontWeight: 600,
+          marginBottom: '8px',
+        }}>
+          {activity.description}
+        </div>
+      )}
+      
+      {/* Time range */}
+      <div style={{
+        fontSize: '16px',
+        color: 'rgba(255,255,255,0.8)',
+        fontWeight: 600,
+        marginBottom: '20px',
+      }}>
+        {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
+      </div>
+      
+      {/* Big countdown numbers */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: '8px',
+        marginBottom: '16px',
+      }}>
+        {hours > 0 && (
+          <>
+            <CountdownDigit value={hours} label="hr" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+            <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8, alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
+          </>
+        )}
+        <CountdownDigit value={minutes} label="min" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+        <div style={{ fontSize: '48px', fontWeight: 800, color: 'white', opacity: 0.8, alignSelf: 'flex-start', marginTop: '12px' }}>:</div>
+        <CountdownDigit value={seconds} label="sec" pulse={pulse} isWarning={isWarning} isAlmostDone={isAlmostDone} />
+      </div>
+      
+      {/* Progress bar */}
+      <div style={{
+        height: '14px',
+        background: 'rgba(255,255,255,0.3)',
+        borderRadius: '7px',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          height: '100%',
+          background: isAlmostDone ? '#FF6B6B' : isWarning ? '#FFD93D' : 'white',
+          borderRadius: '7px',
+          width: `${Math.max(0, 100 - ((timeRemaining / 60) * 100))}%`,
+          minWidth: '2%',
+          transition: 'width 1s linear, background 0.3s ease',
+        }} />
+      </div>
+      
+      {/* Status messages */}
+      {isAlmostDone && (
+        <div style={{
+          marginTop: '16px',
+          fontSize: '20px',
+          fontWeight: 700,
+          color: '#FFD93D',
+          animation: 'pulse 0.5s infinite',
+        }}>
+          ⏰ Almost time to switch!
+        </div>
+      )}
+      {isWarning && !isAlmostDone && (
+        <div style={{
+          marginTop: '16px',
+          fontSize: '18px',
+          fontWeight: 600,
+          color: 'rgba(255,255,255,0.95)',
+        }}>
+          🕐 {Math.ceil(timeRemaining)} minutes left!
+        </div>
+      )}
+    </div>
+  );
+};
+
+const CircularProgress = ({ progress, color, size = 120, strokeWidth = 12 }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (progress / 100) * circumference;
+  
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth={strokeWidth} />
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke={color} strokeWidth={strokeWidth}
+        strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+        style={{ transition: 'stroke-dashoffset 1s ease' }} />
+    </svg>
+  );
+};
+
+const ActivityCard = ({ activity, isCurrent, isPast, timeRemaining, progress, onRefresh, isRefreshing }) => {
+  const bgColor = ACTIVITY_COLORS[activity.type] || '#888';
+  const icon = ACTIVITY_ICONS[activity.type] || '⭐';
+  const canRefresh = activity.customizable && !isPast && onRefresh;
+  
+  const handleRefreshClick = (e) => {
+    e.stopPropagation();
+    if (window.confirm(`🔄 Generate a new activity for "${activity.name}"?\n\nThis will create a different activity suggestion for this time slot.`)) {
+      onRefresh(activity);
+    }
+  };
+  
+  return (
+    <div style={{
+      background: isPast ? `${bgColor}66` : bgColor,
+      borderRadius: '20px',
+      padding: isCurrent ? '20px' : '14px 16px',
+      display: 'flex',
+      flexDirection: isCurrent ? 'column' : 'row',
+      alignItems: 'center',
+      gap: isCurrent ? '16px' : '12px',
+      boxShadow: isCurrent ? `0 8px 24px ${bgColor}60` : '0 2px 8px rgba(0,0,0,0.15)',
+      opacity: isPast ? 0.6 : 1,
+      width: '100%',
+      boxSizing: 'border-box',
+      position: 'relative',
+    }}>
+      {/* Refresh button for customizable activities */}
+      {canRefresh && (
+        <button
+          onClick={handleRefreshClick}
+          disabled={isRefreshing}
+          style={{
+            position: 'absolute',
+            top: isCurrent ? '12px' : '8px',
+            right: isCurrent ? '12px' : '8px',
+            background: 'rgba(255,255,255,0.25)',
+            border: 'none',
+            borderRadius: '50%',
+            width: isCurrent ? '40px' : '32px',
+            height: isCurrent ? '40px' : '32px',
+            cursor: isRefreshing ? 'wait' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: isCurrent ? '20px' : '16px',
+            transition: 'all 0.2s ease',
+            opacity: isRefreshing ? 0.5 : 1,
+            animation: isRefreshing ? 'spin 1s linear infinite' : 'none',
+          }}
+          title="Get different activity"
+        >
+          🔄
+        </button>
+      )}
+      
+      {isCurrent ? (
+        <>
+          <div style={{ fontSize: '72px', lineHeight: 1 }}>{icon}</div>
+          <div style={{ fontSize: '32px', fontWeight: 800, color: 'white', textShadow: '0 2px 4px rgba(0,0,0,0.2)', textAlign: 'center' }}>
+            {activity.name}
+          </div>
+          {activity.description && (
+            <div style={{ fontSize: '16px', color: 'rgba(255,255,255,0.9)', fontWeight: 600, textAlign: 'center' }}>
+              {activity.description}
+            </div>
+          )}
+          <div style={{ fontSize: '18px', color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
+            {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: '36px', lineHeight: 1, flexShrink: 0, filter: isPast ? 'grayscale(40%)' : 'none' }}>{icon}</div>
+          <div style={{ flex: 1, minWidth: 0, paddingRight: canRefresh ? '36px' : '0' }}>
+            <div style={{ fontSize: '18px', fontWeight: 700, color: 'white', textShadow: '0 1px 2px rgba(0,0,0,0.2)' }}>
+              {activity.name}
+            </div>
+            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.85)', fontWeight: 600 }}>
+              {formatTime12h(activity.start)} - {formatTime12h(activity.end)}
+            </div>
+            {activity.description && (
+              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, marginTop: '2px' }}>
+                {activity.description}
+              </div>
+            )}
+          </div>
+          {isPast && <div style={{ fontSize: '24px', color: 'white', flexShrink: 0 }}>✓</div>}
+        </>
+      )}
+    </div>
+  );
+};
+
+const LoadingSpinner = () => (
+  <div style={{ textAlign: 'center', padding: '40px' }}>
+    <div style={{ fontSize: '64px', animation: 'spin 1s linear infinite' }}>🎨</div>
+    <div style={{ color: 'white', fontSize: '24px', fontWeight: 700, marginTop: '16px' }}>Planning today's fun...</div>
+  </div>
+);
+
+// ===========================================
+// SETTINGS PANEL
+// ===========================================
+const SettingsPanel = ({ settings, onSave, onClose }) => {
+  const [localSettings, setLocalSettings] = useState(settings);
+  const [activeSection, setActiveSection] = useState('general');
+  
+  const updateSetting = (key, value) => {
+    setLocalSettings(prev => ({ ...prev, [key]: value }));
+  };
+  
+  const updateKid = (index, field, value) => {
+    const newKids = [...localSettings.kids];
+    newKids[index] = { ...newKids[index], [field]: value };
+    setLocalSettings(prev => ({ ...prev, kids: newKids }));
+  };
+  
+  const addKid = () => {
+    const newKids = [...localSettings.kids, { id: Date.now(), name: 'New Child', age: 2, color: '#FF6B6B' }];
+    setLocalSettings(prev => ({ ...prev, kids: newKids }));
+  };
+  
+  const removeKid = (index) => {
+    const newKids = localSettings.kids.filter((_, i) => i !== index);
+    setLocalSettings(prev => ({ ...prev, kids: newKids }));
+  };
+  
+  const toggleSchoolDay = (day) => {
+    const newDays = localSettings.school_days.includes(day)
+      ? localSettings.school_days.filter(d => d !== day)
+      : [...localSettings.school_days, day].sort();
+    setLocalSettings(prev => ({ ...prev, school_days: newDays }));
+  };
+  
+  const handleSave = () => {
+    onSave(localSettings);
+    onClose();
+  };
+  
+  const inputStyle = {
+    width: '100%',
+    padding: '12px',
+    fontSize: '16px',
+    border: '2px solid rgba(255,255,255,0.3)',
+    borderRadius: '12px',
+    background: 'rgba(255,255,255,0.1)',
+    color: 'white',
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
+  
+  const labelStyle = {
+    display: 'block',
+    fontSize: '14px',
+    fontWeight: 600,
+    marginBottom: '6px',
+    color: 'rgba(255,255,255,0.9)',
+  };
+  
+  const sectionButtonStyle = (active) => ({
+    padding: '12px 16px',
+    fontSize: '14px',
+    fontWeight: 600,
+    border: 'none',
+    borderRadius: '12px',
+    cursor: 'pointer',
+    background: active ? 'white' : 'rgba(255,255,255,0.2)',
+    color: active ? '#764ba2' : 'white',
+    flex: 1,
+  });
+  
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0,0,0,0.8)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000,
+      padding: '20px',
+      boxSizing: 'border-box',
+    }}>
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        borderRadius: '24px',
+        width: '100%',
+        maxWidth: '500px',
+        maxHeight: '90vh',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '20px', borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ margin: 0, color: 'white', fontSize: '24px' }}>⚙️ Settings</h2>
+            <button onClick={onClose} style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '50%',
+              width: '40px',
+              height: '40px',
+              fontSize: '20px',
+              cursor: 'pointer',
+              color: 'white',
+            }}>✕</button>
+          </div>
+          
+          {/* Section tabs */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+            <button onClick={() => setActiveSection('general')} style={sectionButtonStyle(activeSection === 'general')}>General</button>
+            <button onClick={() => setActiveSection('schedule')} style={sectionButtonStyle(activeSection === 'schedule')}>Schedule</button>
+            <button onClick={() => setActiveSection('homeassistant')} style={sectionButtonStyle(activeSection === 'homeassistant')}>Home Assistant</button>
+          </div>
+        </div>
+        
+        {/* Content */}
+        <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
+          {activeSection === 'general' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Kids */}
+              <div>
+                <label style={labelStyle}>Kids</label>
+                {localSettings.kids.map((kid, index) => (
+                  <div key={kid.id} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      value={kid.name}
+                      onChange={(e) => updateKid(index, 'name', e.target.value)}
+                      style={{ ...inputStyle, flex: 2 }}
+                      placeholder="Name"
+                    />
+                    <input
+                      type="number"
+                      value={kid.age}
+                      onChange={(e) => updateKid(index, 'age', parseInt(e.target.value) || 0)}
+                      style={{ ...inputStyle, flex: 1 }}
+                      min="0"
+                      max="18"
+                    />
+                    <input
+                      type="color"
+                      value={kid.color}
+                      onChange={(e) => updateKid(index, 'color', e.target.value)}
+                      style={{ width: '44px', height: '44px', border: 'none', borderRadius: '8px', cursor: 'pointer' }}
+                    />
+                    {localSettings.kids.length > 1 && (
+                      <button onClick={() => removeKid(index)} style={{
+                        background: 'rgba(255,0,0,0.3)',
+                        border: 'none',
+                        borderRadius: '8px',
+                        width: '44px',
+                        height: '44px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        fontSize: '18px',
+                      }}>🗑</button>
+                    )}
+                  </div>
+                ))}
+                <button onClick={addKid} style={{
+                  width: '100%',
+                  padding: '10px',
+                  background: 'rgba(255,255,255,0.2)',
+                  border: '2px dashed rgba(255,255,255,0.4)',
+                  borderRadius: '12px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                }}>+ Add Child</button>
+              </div>
+              
+              {/* Location */}
+              <div>
+                <label style={labelStyle}>Location</label>
+                <input
+                  type="text"
+                  value={localSettings.location}
+                  onChange={(e) => updateSetting('location', e.target.value)}
+                  style={inputStyle}
+                  placeholder="City, State"
+                />
+              </div>
+              
+              {/* Season */}
+              <div>
+                <label style={labelStyle}>Current Season</label>
+                <select
+                  value={localSettings.current_season}
+                  onChange={(e) => updateSetting('current_season', e.target.value)}
+                  style={inputStyle}
+                >
+                  <option value="winter">❄️ Winter</option>
+                  <option value="spring">🌸 Spring</option>
+                  <option value="summer">☀️ Summer</option>
+                  <option value="fall">🍂 Fall</option>
+                </select>
+              </div>
+              
+              {/* Theme */}
+              <div>
+                <label style={labelStyle}>App Theme</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  {Object.entries(THEMES).map(([name, gradient]) => (
+                    <button
+                      key={name}
+                      onClick={() => updateSetting('theme', name)}
+                      style={{
+                        padding: '20px 12px',
+                        border: localSettings.theme === name ? '3px solid white' : '3px solid transparent',
+                        borderRadius: '12px',
+                        background: gradient,
+                        color: 'white',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        textTransform: 'capitalize',
+                      }}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {activeSection === 'schedule' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* School Days */}
+              <div>
+                <label style={labelStyle}>School Days</label>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => (
+                    <button
+                      key={index}
+                      onClick={() => toggleSchoolDay(index)}
+                      style={{
+                        flex: 1,
+                        padding: '12px 0',
+                        border: 'none',
+                        borderRadius: '10px',
+                        background: localSettings.school_days.includes(index) ? 'white' : 'rgba(255,255,255,0.2)',
+                        color: localSettings.school_days.includes(index) ? '#764ba2' : 'white',
+                        cursor: 'pointer',
+                        fontWeight: 700,
+                        fontSize: '14px',
+                      }}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              {/* Times */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>Wake Time</label>
+                  <input type="time" value={localSettings.wake_time} onChange={(e) => updateSetting('wake_time', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Bedtime</label>
+                  <input type="time" value={localSettings.bedtime} onChange={(e) => updateSetting('bedtime', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>School Start</label>
+                  <input type="time" value={localSettings.school_start} onChange={(e) => updateSetting('school_start', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>School End</label>
+                  <input type="time" value={localSettings.school_end} onChange={(e) => updateSetting('school_end', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Baby Nap Start</label>
+                  <input type="time" value={localSettings.baby_nap_start} onChange={(e) => updateSetting('baby_nap_start', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Baby Nap (min)</label>
+                  <input type="number" value={localSettings.baby_nap_duration} onChange={(e) => updateSetting('baby_nap_duration', parseInt(e.target.value) || 0)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Toddler Nap Start</label>
+                  <input type="time" value={localSettings.toddler_nap_start} onChange={(e) => updateSetting('toddler_nap_start', e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Toddler Nap (min)</label>
+                  <input type="number" value={localSettings.toddler_nap_duration} onChange={(e) => updateSetting('toddler_nap_duration', parseInt(e.target.value) || 0)} style={inputStyle} />
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {activeSection === 'homeassistant' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Enable HA */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '16px',
+                background: 'rgba(255,255,255,0.1)',
+                borderRadius: '12px',
+              }}>
+                <span style={{ color: 'white', fontWeight: 600 }}>Enable Home Assistant</span>
+                <button
+                  onClick={() => updateSetting('enable_home_assistant', !localSettings.enable_home_assistant)}
+                  style={{
+                    width: '60px',
+                    height: '32px',
+                    borderRadius: '16px',
+                    border: 'none',
+                    background: localSettings.enable_home_assistant ? '#4CAF50' : 'rgba(255,255,255,0.3)',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    transition: 'background 0.2s',
+                  }}
+                >
+                  <div style={{
+                    width: '26px',
+                    height: '26px',
+                    borderRadius: '50%',
+                    background: 'white',
+                    position: 'absolute',
+                    top: '3px',
+                    left: localSettings.enable_home_assistant ? '31px' : '3px',
+                    transition: 'left 0.2s',
+                  }} />
+                </button>
+              </div>
+              
+              {/* HA URL */}
+              <div>
+                <label style={labelStyle}>Home Assistant URL</label>
+                <input
+                  type="text"
+                  value={localSettings.home_assistant_url}
+                  onChange={(e) => updateSetting('home_assistant_url', e.target.value)}
+                  style={inputStyle}
+                  placeholder="http://homeassistant.local:8123"
+                />
+              </div>
+              
+              {/* Webhook ID */}
+              <div>
+                <label style={labelStyle}>Webhook ID</label>
+                <input
+                  type="text"
+                  value={localSettings.webhook_id}
+                  onChange={(e) => updateSetting('webhook_id', e.target.value)}
+                  style={inputStyle}
+                  placeholder="toddler-schedule"
+                />
+              </div>
+              
+              {/* Automation Toggles */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: '12px',
+                }}>
+                  <span style={{ color: 'white', fontWeight: 600 }}>🔊 Voice Announcements</span>
+                  <button
+                    onClick={() => updateSetting('enable_voice_announcements', !localSettings.enable_voice_announcements)}
+                    style={{
+                      width: '50px',
+                      height: '28px',
+                      borderRadius: '14px',
+                      border: 'none',
+                      background: localSettings.enable_voice_announcements ? '#4CAF50' : 'rgba(255,255,255,0.3)',
+                      cursor: 'pointer',
+                      position: 'relative',
+                    }}
+                  >
+                    <div style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '50%',
+                      background: 'white',
+                      position: 'absolute',
+                      top: '3px',
+                      left: localSettings.enable_voice_announcements ? '25px' : '3px',
+                      transition: 'left 0.2s',
+                    }} />
+                  </button>
+                </div>
+                
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  background: 'rgba(255,255,255,0.1)',
+                  borderRadius: '12px',
+                }}>
+                  <span style={{ color: 'white', fontWeight: 600 }}>💡 Light Automations</span>
+                  <button
+                    onClick={() => updateSetting('enable_light_automations', !localSettings.enable_light_automations)}
+                    style={{
+                      width: '50px',
+                      height: '28px',
+                      borderRadius: '14px',
+                      border: 'none',
+                      background: localSettings.enable_light_automations ? '#4CAF50' : 'rgba(255,255,255,0.3)',
+                      cursor: 'pointer',
+                      position: 'relative',
+                    }}
+                  >
+                    <div style={{
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '50%',
+                      background: 'white',
+                      position: 'absolute',
+                      top: '3px',
+                      left: localSettings.enable_light_automations ? '25px' : '3px',
+                      transition: 'left 0.2s',
+                    }} />
+                  </button>
+                </div>
+              </div>
+              
+              {/* Test Connection */}
+              <button
+                onClick={() => {
+                  sendToHomeAssistant(localSettings, 'test', { message: 'Connection test from schedule app' });
+                  alert('Test event sent! Check Home Assistant logs.');
+                }}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  background: 'rgba(255,255,255,0.2)',
+                  border: '2px solid rgba(255,255,255,0.4)',
+                  borderRadius: '12px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                }}
+              >
+                🧪 Test Connection
+              </button>
+            </div>
+          )}
+        </div>
+        
+        {/* Footer */}
+        <div style={{ padding: '20px', borderTop: '1px solid rgba(255,255,255,0.2)', display: 'flex', gap: '12px' }}>
+          <button onClick={onClose} style={{
+            flex: 1,
+            padding: '14px',
+            border: '2px solid rgba(255,255,255,0.4)',
+            borderRadius: '12px',
+            background: 'transparent',
+            color: 'white',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 600,
+          }}>Cancel</button>
+          <button onClick={handleSave} style={{
+            flex: 1,
+            padding: '14px',
+            border: 'none',
+            borderRadius: '12px',
+            background: 'white',
+            color: '#764ba2',
+            cursor: 'pointer',
+            fontSize: '16px',
+            fontWeight: 700,
+          }}>Save Changes</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ===========================================
+// MAIN APP
+// ===========================================
+export default function ToddlerScheduleApp() {
+  const [currentTime, setCurrentTime] = useState(getCurrentMinutes());
+  const [settings, setSettings] = useState(null);
+  const [schedule, setSchedule] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [lastActivityId, setLastActivityId] = useState(null);
+  const [scheduleType, setScheduleType] = useState('home');
+  const [refreshingActivity, setRefreshingActivity] = useState(null);
+  const [generatedActivities, setGeneratedActivities] = useState({});
+
+  // Initialize
+  useEffect(() => {
+    const init = async () => {
+      await DB.init();
+      await DB.cleanup();
+      const loadedSettings = await DB.getSettings();
+      setSettings(loadedSettings);
+      
+      // Determine if today is a school day
+      const today = new Date().getDay();
+      const isSchool = loadedSettings.school_days.includes(today);
+      setScheduleType(isSchool ? 'school' : 'home');
+    };
+    init();
+  }, []);
+
+  // Build schedule when settings load
+  const buildFullSchedule = useCallback(async () => {
+    if (!settings) return;
+    
+    setLoading(true);
+    const todayKey = getTodayKey();
+    const isSchool = scheduleType === 'school';
+    
+    // Check for existing schedule
+    const existing = await DB.getSchedule(todayKey, scheduleType);
+    
+    let activities;
+    if (existing) {
+      activities = existing.activities;
+    } else {
+      // Generate new activities
+      activities = await generateDailyActivities(settings, scheduleType);
+      await DB.saveSchedule(todayKey, scheduleType, activities);
+      
+      sendToHomeAssistant(settings, 'schedule_generated', {
+        day_type: scheduleType,
+        activities,
+      });
+    }
+    
+    setGeneratedActivities(activities);
+    
+    // Build template and merge activities
+    const template = buildScheduleTemplate(settings, isSchool);
+    const fullSchedule = template.map(item => {
+      if (item.customizable && item.slot && activities[item.slot]) {
+        const custom = activities[item.slot];
+        return { ...item, name: custom.name, type: custom.type, description: custom.description };
+      }
+      return item;
+    });
+    
+    setSchedule(fullSchedule);
+    setLoading(false);
+  }, [settings, scheduleType]);
+
+  // Regenerate a single activity
+  const handleRefreshSingleActivity = useCallback(async (activity) => {
+    if (!settings || !activity.slot) return;
+    
+    setRefreshingActivity(activity.id);
+    
+    try {
+      const kidsInfo = settings.kids.map(k => `${k.name} (${k.age} years old)`).join(' and ');
+      
+      const prompt = `You are helping create a fun activity for toddlers: ${kidsInfo}. It's ${settings.current_season} in ${settings.location}.
+
+Generate ONE creative, age-appropriate activity for the "${activity.slot}" time slot (${formatTime12h(activity.start)} - ${formatTime12h(activity.end)}).
+
+The previous activity was "${activity.name}" - please suggest something DIFFERENT.
+
+Activity types to choose from: freeplay, activity, sensory, music, building, reading, cooking, dance, craft, puzzle, snow, fort, basement, tv, outdoor, errand
+
+Respond with ONLY a JSON object in this exact format, no other text:
+{ "name": "Activity Name", "type": "activity-type", "description": "Brief fun description" }`;
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 200,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+
+      const data = await response.json();
+      const text = data.content?.[0]?.text || '';
+      
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const newActivity = JSON.parse(jsonMatch[0]);
+        
+        // Update the generated activities
+        const updatedActivities = {
+          ...generatedActivities,
+          [activity.slot]: newActivity,
+        };
+        
+        setGeneratedActivities(updatedActivities);
+        
+        // Save to database
+        const todayKey = getTodayKey();
+        await DB.saveSchedule(todayKey, scheduleType, updatedActivities);
+        
+        // Update the schedule
+        setSchedule(prevSchedule => 
+          prevSchedule.map(item => 
+            item.id === activity.id 
+              ? { ...item, name: newActivity.name, type: newActivity.type, description: newActivity.description }
+              : item
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Failed to regenerate activity:', error);
+      alert('Failed to generate new activity. Please try again.');
+    } finally {
+      setRefreshingActivity(null);
+    }
+  }, [settings, scheduleType, generatedActivities]);
+
+  useEffect(() => {
+    buildFullSchedule();
+  }, [buildFullSchedule]);
+
+  // Update time every second for smooth countdown
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(getCurrentMinutes()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Find current activity
+  const currentActivityIndex = schedule.findIndex(activity => {
+    const start = parseTime(activity.start);
+    const end = parseTime(activity.end);
+    return currentTime >= start && currentTime < end;
+  });
+
+  const currentActivity = currentActivityIndex !== -1 ? schedule[currentActivityIndex] : null;
+
+  // Send HA events on activity change
+  useEffect(() => {
+    if (settings && currentActivity && currentActivity.id !== lastActivityId) {
+      setLastActivityId(currentActivity.id);
+      
+      DB.logActivity({
+        activity_id: currentActivity.id,
+        activity_name: currentActivity.name,
+        activity_type: currentActivity.type,
+      });
+      
+      sendToHomeAssistant(settings, 'activity_changed', {
+        activity_id: currentActivity.id,
+        activity_name: currentActivity.name,
+        activity_type: currentActivity.type,
+        start_time: currentActivity.start,
+        end_time: currentActivity.end,
+        description: currentActivity.description || '',
+        enable_voice: settings.enable_voice_announcements,
+        enable_lights: settings.enable_light_automations,
+      });
+    }
+  }, [settings, currentActivity, lastActivityId]);
+
+  // Calculate progress
+  let timeRemaining = 0;
+  let progress = 0;
+  if (currentActivityIndex !== -1 && schedule[currentActivityIndex]) {
+    const current = schedule[currentActivityIndex];
+    const start = parseTime(current.start);
+    const end = parseTime(current.end);
+    timeRemaining = end - currentTime;
+    progress = ((currentTime - start) / (end - start)) * 100;
+  }
+
+  // Time display
+  const now = new Date();
+  const timeDisplay = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayDisplay = dayNames[now.getDay()];
+
+  const upcomingActivities = schedule.filter((_, index) => index !== currentActivityIndex);
+
+  const handleRegenerate = async () => {
+    const todayKey = getTodayKey();
+    await DB.deleteSchedule(todayKey, scheduleType);
+    await buildFullSchedule();
+  };
+
+  const handleSaveSettings = async (newSettings) => {
+    await DB.updateSettings(newSettings);
+    setSettings(newSettings);
+    
+    // Check if schedule type changed
+    const today = new Date().getDay();
+    const isSchool = newSettings.school_days.includes(today);
+    setScheduleType(isSchool ? 'school' : 'home');
+  };
+
+  if (!settings) {
+    return <LoadingSpinner />;
+  }
+
+  const theme = THEMES[settings.theme] || THEMES.purple;
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: theme,
+      padding: '20px',
+      fontFamily: "'Nunito', sans-serif",
+      boxSizing: 'border-box',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '20px',
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Nunito', sans-serif; }
+        body { margin: 0; padding: 0; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes bounce { 
+          0%, 100% { transform: translateY(0); } 
+          50% { transform: translateY(-5px); } 
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0) scale(1); opacity: 0.1; }
+          50% { transform: translateY(-100px) scale(1.2); opacity: 0.2; }
+        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.4); border-radius: 4px; }
+        select option { background: #764ba2; color: white; }
+      `}</style>
+
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          onSave={handleSaveSettings}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* Header */}
+      <div style={{ textAlign: 'center', color: 'white' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+          <button
+            onClick={() => setShowSettings(true)}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '50%',
+              width: '44px',
+              height: '44px',
+              fontSize: '20px',
+              cursor: 'pointer',
+              color: 'white',
+            }}
+          >
+            ⚙️
+          </button>
+        </div>
+        
+        <div style={{ fontSize: '56px', fontWeight: 800, textShadow: '0 4px 12px rgba(0,0,0,0.3)', lineHeight: 1.1 }}>
+          {timeDisplay}
+        </div>
+        <div style={{ fontSize: '24px', fontWeight: 600, opacity: 0.9, marginTop: '4px' }}>{dayDisplay}</div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', gap: '10px', marginTop: '12px' }}>
+          <button
+            onClick={() => setScheduleType('school')}
+            style={{
+              padding: '10px 20px',
+              fontSize: '16px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '50px',
+              cursor: 'pointer',
+              background: scheduleType === 'school' ? 'white' : 'rgba(255,255,255,0.3)',
+              color: scheduleType === 'school' ? '#764ba2' : 'white',
+            }}
+          >
+            🏫 School Day
+          </button>
+          <button
+            onClick={() => setScheduleType('home')}
+            style={{
+              padding: '10px 20px',
+              fontSize: '16px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '50px',
+              cursor: 'pointer',
+              background: scheduleType === 'home' ? 'white' : 'rgba(255,255,255,0.3)',
+              color: scheduleType === 'home' ? '#764ba2' : 'white',
+            }}
+          >
+            🏠 Home Day
+          </button>
+        </div>
+
+        <button
+          onClick={handleRegenerate}
+          disabled={loading}
+          style={{
+            marginTop: '10px',
+            padding: '8px 16px',
+            fontSize: '14px',
+            fontWeight: 600,
+            border: 'none',
+            borderRadius: '50px',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            background: 'rgba(255,255,255,0.2)',
+            color: 'white',
+            opacity: loading ? 0.5 : 1,
+          }}
+        >
+          🎲 New Activities
+        </button>
+
+        <div style={{ fontSize: '12px', marginTop: '8px', opacity: 0.7 }}>
+          {settings.enable_home_assistant ? '🟢 Home Assistant Connected' : '⚪ Home Assistant Disabled'}
+        </div>
+      </div>
+
+      {loading ? (
+        <LoadingSpinner />
+      ) : (
+        <>
+          {/* Current Activity Card with Integrated Countdown */}
+          {currentActivityIndex !== -1 && (
+            <CurrentActivityCard
+              activity={schedule[currentActivityIndex]}
+              timeRemaining={timeRemaining}
+              onRefresh={handleRefreshSingleActivity}
+              isRefreshing={refreshingActivity === schedule[currentActivityIndex].id}
+            />
+          )}
+
+          <div style={{
+            background: 'rgba(255,255,255,0.15)',
+            borderRadius: '24px',
+            padding: '20px',
+            backdropFilter: 'blur(10px)',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+          }}>
+            <div style={{ textAlign: 'center', color: 'white', fontSize: '20px', fontWeight: 700, marginBottom: '12px', flexShrink: 0 }}>
+              📅 Today's Schedule
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, paddingRight: '4px' }}>
+              {upcomingActivities.map((activity) => (
+                <ActivityCard
+                  key={activity.id}
+                  activity={activity}
+                  isCurrent={false}
+                  isPast={currentTime >= parseTime(activity.end)}
+                  timeRemaining={0}
+                  progress={0}
+                  onRefresh={handleRefreshSingleActivity}
+                  isRefreshing={refreshingActivity === activity.id}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

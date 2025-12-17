@@ -1,0 +1,299 @@
+# ===========================================
+# HOME ASSISTANT CONFIGURATION FOR TODDLER SCHEDULE
+# ===========================================
+# 
+# This file contains the automations and scripts needed to integrate
+# the Toddler Schedule app with Home Assistant.
+#
+# SETUP STEPS:
+# 1. Add these automations to your automations.yaml or via the UI
+# 2. Update the webhook ID in the app's CONFIG section to match
+# 3. Customize the actions (announcements, lights, etc.) for your setup
+#
+# ===========================================
+
+# ===========================================
+# WEBHOOK TRIGGER AUTOMATION
+# ===========================================
+# This receives events from the schedule app
+
+automation:
+  # Main webhook receiver - routes events to appropriate handlers
+  - id: toddler_schedule_webhook
+    alias: "Toddler Schedule - Webhook Receiver"
+    description: "Receives events from the toddler schedule app"
+    trigger:
+      - platform: webhook
+        webhook_id: toddler-schedule
+        allowed_methods:
+          - POST
+        local_only: false  # Set to true if tablet is on same network
+    action:
+      - choose:
+          # Activity Changed Event
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.json.event == 'activity_changed' }}"
+            sequence:
+              - service: script.toddler_activity_changed
+                data:
+                  activity_id: "{{ trigger.json.activity_id }}"
+                  activity_name: "{{ trigger.json.activity_name }}"
+                  activity_type: "{{ trigger.json.activity_type }}"
+                  start_time: "{{ trigger.json.start_time }}"
+                  end_time: "{{ trigger.json.end_time }}"
+                  description: "{{ trigger.json.description }}"
+          
+          # Schedule Generated Event
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.json.event == 'schedule_generated' }}"
+            sequence:
+              - service: script.toddler_schedule_generated
+                data:
+                  day_type: "{{ trigger.json.day_type }}"
+
+  # ===========================================
+  # ACTIVITY-SPECIFIC AUTOMATIONS
+  # ===========================================
+  
+  # Wake Up Time
+  - id: toddler_activity_wake
+    alias: "Toddler Schedule - Wake Up"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: wake
+    action:
+      # Gradually turn on lights
+      - service: light.turn_on
+        target:
+          area_id: kids_room  # Change to your area
+        data:
+          brightness_pct: 30
+          transition: 60
+      # Optional: Start gentle music
+      # - service: media_player.play_media
+      #   target:
+      #     entity_id: media_player.kids_room_speaker
+      #   data:
+      #     media_content_id: "spotify:playlist:xxxxx"
+      #     media_content_type: playlist
+
+  # Breakfast Time
+  - id: toddler_activity_breakfast
+    alias: "Toddler Schedule - Breakfast"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: breakfast
+    action:
+      - service: tts.speak
+        target:
+          entity_id: tts.google_en  # Change to your TTS
+        data:
+          message: "Time for breakfast! Yummy yummy!"
+          media_player_entity_id: media_player.kitchen_speaker  # Change to your speaker
+
+  # Nap Time
+  - id: toddler_activity_nap
+    alias: "Toddler Schedule - Nap Time"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: nap
+    action:
+      # Dim lights
+      - service: light.turn_on
+        target:
+          area_id: kids_room
+        data:
+          brightness_pct: 5
+          color_temp: 500  # Warm white
+          transition: 30
+      # Optional: Play white noise
+      # - service: media_player.play_media
+      #   target:
+      #     entity_id: media_player.kids_room_speaker
+      #   data:
+      #     media_content_id: "spotify:track:white_noise_id"
+      #     media_content_type: track
+
+  # Bath Time
+  - id: toddler_activity_bath
+    alias: "Toddler Schedule - Bath Time"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: bath
+    action:
+      - service: tts.speak
+        target:
+          entity_id: tts.google_en
+        data:
+          message: "Bath time! Splish splash!"
+          media_player_entity_id: media_player.bathroom_speaker
+      # Turn on bathroom lights bright
+      - service: light.turn_on
+        target:
+          area_id: bathroom
+        data:
+          brightness_pct: 100
+
+  # Bedtime
+  - id: toddler_activity_bedtime
+    alias: "Toddler Schedule - Bedtime"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: bedtime
+    action:
+      # Dim all lights in house
+      - service: light.turn_on
+        target:
+          entity_id: all
+        data:
+          brightness_pct: 20
+          transition: 300
+      # Kids room very dim and warm
+      - service: light.turn_on
+        target:
+          area_id: kids_room
+        data:
+          brightness_pct: 10
+          color_temp: 500
+          transition: 60
+
+  # Snack Time
+  - id: toddler_activity_snack
+    alias: "Toddler Schedule - Snack Time"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: snack
+    action:
+      - service: tts.speak
+        target:
+          entity_id: tts.google_en
+        data:
+          message: "Snack time! Who's hungry?"
+          media_player_entity_id: media_player.kitchen_speaker
+
+  # Activity Time (crafts, play, etc)
+  - id: toddler_activity_activity
+    alias: "Toddler Schedule - Activity Time"
+    trigger:
+      - platform: event
+        event_type: toddler_activity
+        event_data:
+          activity_type: activity
+    action:
+      - service: tts.speak
+        target:
+          entity_id: tts.google_en
+        data:
+          message: "Activity time! Let's have fun!"
+          media_player_entity_id: media_player.living_room_speaker
+
+
+# ===========================================
+# SCRIPTS
+# ===========================================
+
+script:
+  # Called when any activity changes
+  toddler_activity_changed:
+    alias: "Toddler Activity Changed Handler"
+    description: "Processes activity changes from the schedule app"
+    fields:
+      activity_id:
+        description: "Unique ID of the activity"
+      activity_name:
+        description: "Display name of the activity"
+      activity_type:
+        description: "Type category of the activity"
+      start_time:
+        description: "Start time (HH:MM)"
+      end_time:
+        description: "End time (HH:MM)"
+      description:
+        description: "Activity description"
+    sequence:
+      # Log the activity change
+      - service: logbook.log
+        data:
+          name: "Toddler Schedule"
+          message: "Activity changed to: {{ activity_name }} ({{ activity_type }})"
+      
+      # Fire an event that other automations can listen to
+      - event: toddler_activity
+        event_data:
+          activity_id: "{{ activity_id }}"
+          activity_name: "{{ activity_name }}"
+          activity_type: "{{ activity_type }}"
+          start_time: "{{ start_time }}"
+          end_time: "{{ end_time }}"
+          description: "{{ description }}"
+      
+      # Generic announcement (customize or remove)
+      # - service: tts.speak
+      #   target:
+      #     entity_id: tts.google_en
+      #   data:
+      #     message: "Time for {{ activity_name }}!"
+      #     media_player_entity_id: media_player.kitchen_speaker
+
+  # Called when a new schedule is generated
+  toddler_schedule_generated:
+    alias: "Toddler Schedule Generated Handler"
+    fields:
+      day_type:
+        description: "Type of day (school or home)"
+    sequence:
+      - service: logbook.log
+        data:
+          name: "Toddler Schedule"
+          message: "New {{ day_type }} day schedule generated"
+      
+      # Optional: Send notification to parents
+      - service: notify.mobile_app_your_phone  # Change to your notify service
+        data:
+          title: "Toddler Schedule Ready"
+          message: "Today's {{ day_type }} day activities have been planned!"
+
+
+# ===========================================
+# INPUT HELPERS (Optional)
+# ===========================================
+# Add these to configuration.yaml if you want to track state in HA
+
+input_text:
+  toddler_current_activity:
+    name: Current Toddler Activity
+    initial: "None"
+    
+input_select:
+  toddler_schedule_type:
+    name: Schedule Type
+    options:
+      - school
+      - home
+    initial: home
+
+
+# ===========================================
+# TEMPLATE SENSORS (Optional)
+# ===========================================
+# Add to configuration.yaml for dashboard display
+
+template:
+  - sensor:
+      - name: "Toddler Current Activity"
+        state: "{{ states('input_text.toddler_current_activity') }}"
+        icon: mdi:baby-face-outline

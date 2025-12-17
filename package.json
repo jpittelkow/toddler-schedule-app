@@ -1,0 +1,29 @@
+{
+  "name": "toddler-schedule",
+  "version": "1.0.0",
+  "description": "Visual daily schedule for toddlers with Home Assistant integration",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "install-all": "npm install && cd client && npm install"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  },
+  "keywords": [
+    "toddler",
+    "schedule",
+    "home-assistant",
+    "parenting"
+  ],
+  "author": "",
+  "license": "MIT"
+}
